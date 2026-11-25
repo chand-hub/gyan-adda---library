@@ -1,0 +1,6 @@
+{
+  "name": "GYAN ADDA LIBRARY",
+  "description": "GYAN ADDA LIBRARY management system with public library showcase, secure admin console, attendance and shift tracking, fee reminders, student portal, seat allocation, and analytics.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
