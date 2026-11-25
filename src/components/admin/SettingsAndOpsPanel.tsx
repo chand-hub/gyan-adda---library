@@ -31,6 +31,7 @@ import {
   FacilityItem,
   GalleryItem,
   LibrarySettings,
+  resolveClientBrandName,
   StaffRecord,
   StudentRecord,
 } from '../../types/library';
@@ -140,7 +141,7 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
   const [notifMessage, setNotifMessage] = useState('');
 
   // Settings State
-  const [libName, setLibName] = useState(settings?.libraryName || DEFAULT_GYAN_ADDA_SETTINGS.libraryName);
+  const [libName, setLibName] = useState(resolveClientBrandName(settings?.libraryName));
   const [tagline, setTagline] = useState(settings?.tagline || DEFAULT_GYAN_ADDA_SETTINGS.tagline);
   const [address, setAddress] = useState(settings?.address || DEFAULT_GYAN_ADDA_SETTINGS.address);
   const [nearbyLandmarks, setNearbyLandmarks] = useState(
@@ -202,7 +203,7 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
   useEffect(() => {
     const src = settings || serverSettings;
     if (src) {
-      setLibName(src.libraryName);
+      setLibName(resolveClientBrandName(src.libraryName));
       setTagline(src.tagline);
       setAddress(src.address);
       setNearbyLandmarks(src.nearbyLandmarks || DEFAULT_GYAN_ADDA_SETTINGS.nearbyLandmarks || '');

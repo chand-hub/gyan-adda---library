@@ -34,6 +34,7 @@ import {
   MembershipPlan,
   MembershipRecord,
   PaymentRecord,
+  resolveClientBrandName,
   StudentRecord,
 } from '../../types/library';
 
@@ -1282,7 +1283,7 @@ export const FinancePanel: React.FC<FinancePanelProps> = ({
                 onClick={() =>
                   downloadReceiptHtml(
                     receiptPreview,
-                    settings?.libraryName || 'GYAN ADDA LIBRARY',
+                    resolveClientBrandName(settings?.libraryName),
                     settings?.address || ''
                   )
                 }

@@ -16,6 +16,8 @@ import { AuthModal } from './components/AuthModal';
 import {
   AnnouncementRecord,
   BookRecord,
+  BRAND_NAME,
+  BRAND_SUBTITLE,
   CurrentAffairsItem,
   DigitalGKBook,
   ExamCategory,
@@ -25,6 +27,7 @@ import {
   LibrarySettings,
   MembershipPlan,
   MockTestRecord,
+  resolveClientBrandName,
   SeatRecord,
 } from './types/library';
 
@@ -168,13 +171,31 @@ const MainRouter: React.FC = () => {
     }
   }, [adminSession, firebaseUser, actualRole, loading]);
 
+  useEffect(() => {
+    const isAdminOrStaff = Boolean(adminSession) || (Boolean(firebaseUser) && actualRole !== 'student');
+    if (viewMode === 'admin_login' && !isAdminOrStaff) {
+      document.title = `Admin Login — ${BRAND_NAME}`;
+    } else if (viewMode === 'portal' && (isAdminOrStaff || firebaseUser)) {
+      document.title = isAdminOrStaff
+        ? `Admin Dashboard — ${BRAND_NAME}`
+        : `Student Portal — ${BRAND_NAME}`;
+    } else {
+      document.title = `${BRAND_NAME} — ${BRAND_SUBTITLE}`;
+    }
+  }, [viewMode, adminSession, firebaseUser, actualRole]);
+
   // Fetch sanitized public GYAN ADDA LIBRARY info from server API
   const refreshPublicLibraryInfo = useCallback(async () => {
     try {
       const res = await fetch('/api/public/library-info');
       if (!res.ok) return;
       const data = await res.json();
-      if (data.settings) setSettings(data.settings);
+      if (data.settings) {
+        setSettings({
+          ...data.settings,
+          libraryName: resolveClientBrandName(data.settings.libraryName),
+        });
+      }
       if (Array.isArray(data.faqs)) setFaqs(data.faqs);
       if (Array.isArray(data.importantQuestions)) setImportantQuestions(data.importantQuestions);
       if (Array.isArray(data.gallery)) setGallery(data.gallery);
@@ -205,10 +226,12 @@ const MainRouter: React.FC = () => {
         (snap) => {
           markFirestoreConnected();
           if (snap.exists()) {
+            const data = snap.data() as Omit<LibrarySettings, 'id'>;
             setSettings((prev) => ({
               ...(prev || {}),
               id: snap.id,
-              ...(snap.data() as Omit<LibrarySettings, 'id'>),
+              ...data,
+              libraryName: resolveClientBrandName(data.libraryName),
             }));
           }
         },

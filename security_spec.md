@@ -1,4 +1,4 @@
-# VIDHYA LIBRARY Security Specification
+# GYAN ADDA LIBRARY Security Specification
 
 ## 1. Data Invariants
 1. **Identity Integrity**: No user may create or mutate a document claiming a `uid`, `studentUid`, or `actorUid` different from `request.auth.uid` (unless performed by an authenticated Admin/Manager/Staff with verified privileges).

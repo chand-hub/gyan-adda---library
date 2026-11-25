@@ -238,10 +238,10 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
         {/* Left Navy Institutional Panel */}
         <aside className="lg:col-span-5 bg-primary text-on-primary p-7 sm:p-9 flex flex-col justify-between gap-8">
           <div className="space-y-6">
-            <BrandLogo variant="light" subtitle="Administration Console" />
+            <BrandLogo variant="light" subtitle="Self-Study Campus" />
             <div className="space-y-3 pt-2">
               <p className="font-label text-[11px] uppercase tracking-widest text-on-primary-container">
-                GYAN ADDA LIBRARY · Secured Portal
+                GYAN ADDA LIBRARY · Administration Console
               </p>
               <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-white leading-tight">
                 Administrator Sign In

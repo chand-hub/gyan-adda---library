@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Lock, Mail, User as UserIcon, Phone, MapPin, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BrandLogo } from './BrandLogo';
+import { BRAND_SUBTITLE } from '../types/library';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -147,7 +148,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Left Navy Institutional Panel */}
         <aside className="hidden lg:flex lg:col-span-5 bg-primary text-on-primary p-8 flex-col justify-between gap-8">
           <div className="space-y-6">
-            <BrandLogo variant="light" />
+            <BrandLogo variant="light" subtitle={BRAND_SUBTITLE} />
             <div className="space-y-3 pt-2">
               <h2 className="font-display text-2xl font-extrabold text-on-primary leading-tight">
                 Your study desk, AI tests, and fee receipts in one place
@@ -180,7 +181,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         <div className="lg:col-span-7 bg-surface-container-lowest text-on-surface flex flex-col min-w-0">
           <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-b border-outline-variant bg-surface-container-low">
             <div className="lg:hidden min-w-0">
-              <BrandLogo variant="dark" />
+              <BrandLogo variant="dark" subtitle={BRAND_SUBTITLE} />
             </div>
             <span className="hidden lg:inline-block font-display text-base font-bold text-primary">
               {tab === 'login'
@@ -343,7 +344,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                 {tab === 'complete_profile' && (
                   <div className="p-3 rounded bg-surface-container-low border border-outline-variant text-xs text-on-surface-variant mb-3">
-                    Complete your member details to generate your unique GYAN ADDA LIBRARY Student ID (e.g. VL2026XXX) and QR Pass.
+                    Complete your member details to generate your unique GYAN ADDA LIBRARY Student ID and QR Pass.
                   </div>
                 )}
 

@@ -31,11 +31,13 @@ import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { DEMO_IMAGES } from '../lib/demoSeed';
 import {
+  BRAND_SUBTITLE,
   DEFAULT_GYAN_ADDA_SETTINGS,
   FacilityItem,
   FaqItem,
   GalleryItem,
   LibrarySettings,
+  resolveClientBrandName,
 } from '../types/library';
 import { BrandLogo } from './BrandLogo';
 import { LibraryMap } from './LibraryMap';
@@ -280,7 +282,7 @@ export const PublicWebsite: React.FC<PublicWebsiteProps> = ({
   const effectiveSettings: LibrarySettings = {
     ...DEFAULT_GYAN_ADDA_SETTINGS,
     ...(settings || {}),
-    libraryName: settings?.libraryName || 'GYAN ADDA LIBRARY',
+    libraryName: resolveClientBrandName(settings?.libraryName),
   };
 
   const phoneNumbers = useMemo(() => {
@@ -460,7 +462,7 @@ export const PublicWebsite: React.FC<PublicWebsiteProps> = ({
       <header className="sticky top-0 z-30 bg-surface-container-lowest/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-outline-variant dark:border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
           <a href="#home" className="shrink-0">
-            <BrandLogo variant={darkMode ? 'light' : 'dark'} subtitle="Self-Study Campus" />
+            <BrandLogo variant={darkMode ? 'light' : 'dark'} subtitle={BRAND_SUBTITLE} />
           </a>
 
           {/* Public Navigation Links */}
@@ -564,9 +566,14 @@ export const PublicWebsite: React.FC<PublicWebsiteProps> = ({
                 <span>{effectiveSettings.ratingText || '4.9/5 Student Rating · Open 24 Hours'}</span>
               </div>
 
-              <h1 className="font-display text-3xl sm:text-5xl font-extrabold tracking-tight leading-tight">
-                {effectiveSettings.libraryName}
-              </h1>
+              <div>
+                <h1 className="font-display text-3xl sm:text-5xl font-extrabold tracking-tight leading-tight">
+                  {effectiveSettings.libraryName}
+                </h1>
+                <p className="font-headline text-base sm:text-xl font-bold text-blue-200 tracking-wide mt-1.5">
+                  {BRAND_SUBTITLE}
+                </p>
+              </div>
 
               <p className="text-base sm:text-lg text-blue-100 leading-relaxed max-w-2xl">
                 {effectiveSettings.tagline || 'Your Knowledge, Your Future.'} Welcome to Darbhanga&apos;s calm, air-conditioned 24-hour self-study campus crafted for disciplined UPSC, BPSC, NEET, JEE, SSC, and Banking preparation.
@@ -806,10 +813,10 @@ export const PublicWebsite: React.FC<PublicWebsiteProps> = ({
               className="lg:col-span-7 p-6 sm:p-8 rounded-2xl bg-surface-container-lowest dark:bg-slate-900 border border-outline-variant dark:border-slate-800 shadow-sm space-y-4"
             >
               <h3 className="font-display text-xl font-bold text-primary dark:text-white">
-                Send Admission / Shift Enquiry
+                {effectiveSettings.libraryName} — Admission Enquiry
               </h3>
               <p className="text-xs text-on-surface-variant dark:text-slate-400">
-                Leave your details below and our campus coordinator will call you back.
+                Leave your details below and our {effectiveSettings.libraryName} ({BRAND_SUBTITLE}) coordinator will call you back.
               </p>
 
               {enqFeedback && (
@@ -1164,7 +1171,7 @@ export const PublicWebsite: React.FC<PublicWebsiteProps> = ({
       <footer className="bg-[#001633] text-blue-100 border-t border-white/10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col md:flex-row items-center justify-between gap-4 text-xs">
           <div className="flex flex-col sm:flex-row items-center gap-3 text-center sm:text-left">
-            <BrandLogo variant="light" />
+            <BrandLogo variant="light" subtitle={BRAND_SUBTITLE} />
             <span className="text-blue-200/80">
               {effectiveSettings.address} · {effectiveSettings.openingHours}
             </span>

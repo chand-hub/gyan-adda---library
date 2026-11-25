@@ -732,8 +732,19 @@ export const GK_BOOK_SUBJECTS: string[] = [
   'General Knowledge',
 ];
 
+export const BRAND_NAME = 'GYAN ADDA LIBRARY';
+export const BRAND_SUBTITLE = 'Self-Study Campus';
+
+export function resolveClientBrandName(raw?: string | null): string {
+  const cleaned = (raw || '').trim();
+  if (!cleaned || /vidhya\s*library/i.test(cleaned)) {
+    return BRAND_NAME;
+  }
+  return cleaned;
+}
+
 export const DEFAULT_GYAN_ADDA_SETTINGS: LibrarySettings = {
-  libraryName: 'GYAN ADDA LIBRARY',
+  libraryName: BRAND_NAME,
   tagline: 'Your Knowledge, Your Future.',
   address: '2nd Floor, Station Rd, in front of Poor Home Road, Mirzapur Chowk, Darbhanga, Bihar 846004',
   nearbyLandmarks: 'In front of Poor Home Road · 350m from Darbhanga Junction',

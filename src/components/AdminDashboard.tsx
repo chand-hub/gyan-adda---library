@@ -82,6 +82,8 @@ import {
   AuditLogRecord,
   BookIssueRecord,
   BookRecord,
+  BRAND_NAME,
+  BRAND_SUBTITLE,
   CurrentAffairsItem,
   DigitalGKBook,
   EnquiryRecord,
@@ -94,6 +96,7 @@ import {
   MembershipRecord,
   MockTestRecord,
   PaymentRecord,
+  resolveClientBrandName,
   SeatBookingRecord,
   SeatRecord,
   StaffRecord,
@@ -640,7 +643,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <div className="flex flex-col gap-5 p-4 overflow-y-auto">
           {/* Brand Header */}
           <div className="flex items-center justify-between px-2 py-1">
-            <BrandLogo variant="light" subtitle="Admin workspace" />
+            <BrandLogo variant="light" subtitle={BRAND_SUBTITLE} />
             <button
               type="button"
               onClick={() => setSidebarOpen(false)}
@@ -733,10 +736,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </button>
             <div className="min-w-0">
               <p className="font-headline text-sm sm:text-base font-bold text-primary truncate">
-                GYAN ADDA LIBRARY
+                {resolveClientBrandName(settings?.libraryName) || BRAND_NAME}
               </p>
               <p className="font-body text-xs text-on-surface-variant capitalize truncate">
-                {effectiveRole} Management Console
+                {BRAND_SUBTITLE} · {effectiveRole} Management Console
               </p>
             </div>
           </div>

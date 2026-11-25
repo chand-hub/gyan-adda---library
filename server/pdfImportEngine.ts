@@ -4,9 +4,9 @@ import path from 'path';
 import { GoogleGenAI, Type } from '@google/genai';
 import { PDFDocument } from 'pdf-lib';
 import {
-  GeminiErrorCategory,
+  type GeminiErrorCategory,
   GeminiRequestCoordinator,
-  ParsedGeminiError,
+  type ParsedGeminiError,
   getActiveGeminiModel,
   parseGeminiApiError,
 } from './geminiResilience.ts';

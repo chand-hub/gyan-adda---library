@@ -50,6 +50,7 @@ import {
   AttendanceRecord,
   BookIssueRecord,
   BookRecord,
+  BRAND_SUBTITLE,
   CurrentAffairsItem,
   DigitalGKBook,
   ExamCategory,
@@ -61,6 +62,7 @@ import {
   MockTestRecord,
   NotificationRecord,
   PaymentRecord,
+  resolveClientBrandName,
   SeatBookingRecord,
   SeatRecord,
   StudentFeeRecord,
@@ -708,7 +710,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
             key: orderData.keyId,
             amount: orderData.amountPaise,
             currency: orderData.currency,
-            name: settings?.libraryName || 'GYAN ADDA LIBRARY',
+            name: resolveClientBrandName(settings?.libraryName),
             description: checkoutPlan.name,
             order_id: orderData.orderId,
             prefill: {
@@ -866,7 +868,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       >
         <div className="flex flex-col gap-5 p-4 overflow-y-auto">
           <div className="flex items-center justify-between px-2 py-1">
-            <BrandLogo variant="light" subtitle="Student portal" />
+            <BrandLogo variant="light" subtitle={BRAND_SUBTITLE} />
             <button
               type="button"
               onClick={() => setSidebarOpen(false)}
@@ -1037,7 +1039,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                   Complete Your Student Registration
                 </h2>
                 <p className="text-sm text-on-surface-variant mt-1">
-                  Generate your unique Student ID (VL2026XXX) and QR Pass to book seats, record attendance, and activate memberships. Competitive exams and GK notes are already unlocked!
+                  Generate your unique GYAN ADDA LIBRARY Student ID and QR Pass to book seats, record attendance, and activate memberships. Competitive exams and GK notes are already unlocked!
                 </p>
               </div>
               <button
@@ -1058,7 +1060,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-xs font-semibold text-secondary uppercase tracking-wider">
-                          Welcome Back · Gyan Adda Campus
+                          Welcome Back · GYAN ADDA LIBRARY · {BRAND_SUBTITLE}
                         </p>
                         <h2 className="mt-1 font-headline text-xl sm:text-2xl font-bold text-on-surface break-words">
                           {activeStudent.fullName}
@@ -2007,9 +2009,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
             <div className="flex flex-wrap items-start justify-between gap-2 border-b border-outline-variant pb-4">
               <div className="min-w-0">
                 <h3 className="font-headline text-xl font-bold text-primary">
-                  {settings?.libraryName || 'GYAN ADDA LIBRARY'}
+                  {resolveClientBrandName(settings?.libraryName)}
                 </h3>
-                <p className="text-xs text-on-surface-variant">Official Payment Receipt</p>
+                <p className="text-xs text-on-surface-variant">{BRAND_SUBTITLE} · Official Payment Receipt</p>
               </div>
               <div className="text-left sm:text-right text-xs">
                 <p className="font-mono font-bold text-primary break-all">{receiptPreview.receiptNumber}</p>

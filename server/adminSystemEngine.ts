@@ -2,19 +2,19 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import {
-  AdminLoginActivity,
-  AttendanceAuditEntry,
-  AttendanceRecord,
-  AttendanceStatusCode,
-  CustomAttendanceStatus,
+  type AdminLoginActivity,
+  type AttendanceAuditEntry,
+  type AttendanceRecord,
+  type AttendanceStatusCode,
+  type CustomAttendanceStatus,
   DEFAULT_FACILITIES,
   DEFAULT_GYAN_ADDA_SETTINGS,
-  EnquiryRecord,
-  FacilityItem,
-  FaqItem,
-  GalleryItem,
-  LibrarySettings,
-  LibraryShift,
+  type EnquiryRecord,
+  type FacilityItem,
+  type FaqItem,
+  type GalleryItem,
+  type LibrarySettings,
+  type LibraryShift,
 } from '../src/types/library.ts';
 
 export interface AdminCredentialState {
@@ -1099,9 +1099,14 @@ export class AdminSystemEngine {
       .filter((g) => g.approved !== false)
       .sort((a, b) => a.sortOrder - b.sortOrder);
 
+    const normalizedName =
+      !s.libraryName || /vidhya\s*library/i.test(s.libraryName)
+        ? 'GYAN ADDA LIBRARY'
+        : s.libraryName;
+
     return {
       settings: {
-        libraryName: s.libraryName || 'GYAN ADDA LIBRARY',
+        libraryName: normalizedName,
         tagline: s.tagline,
         address: s.address,
         nearbyLandmarks: s.nearbyLandmarks || 'In front of Poor Home Road, near Mirzapur Chowk & Darbhanga Junction',
@@ -1126,8 +1131,16 @@ export class AdminSystemEngine {
   }
 
   public getAdminPublicContent() {
+    const s = this.store.settings;
+    const normalizedName =
+      !s.libraryName || /vidhya\s*library/i.test(s.libraryName)
+        ? 'GYAN ADDA LIBRARY'
+        : s.libraryName;
     return {
-      settings: this.store.settings,
+      settings: {
+        ...s,
+        libraryName: normalizedName,
+      },
       faqs: [...this.store.faqs].sort((a, b) => a.sortOrder - b.sortOrder),
       gallery: [...this.store.gallery].sort((a, b) => a.sortOrder - b.sortOrder),
       enquiries: [...this.store.enquiries],
