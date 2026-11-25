@@ -1,3 +1,5 @@
+import { safeApiFetch } from './safeFetch';
+
 const AI_COOLDOWN_STORAGE_KEY = 'vl_ai_shared_cooldown_v1';
 
 export interface SharedAiCooldownState {
@@ -116,23 +118,19 @@ export function clearStoredAiCooldown(): void {
 }
 
 export async function fetchServerAiStatus(token: string): Promise<SharedAiCooldownState | null> {
-  try {
-    const res = await fetch('/api/ai/status', {
-      headers: { Authorization: `Bearer ${token}` },
+  const res = await safeApiFetch<any>('/api/ai/status', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok || !res.data) return null;
+  const data = res.data;
+  if (data?.cooldownActive && (data.cooldownUntil || data.cooldownRemainingSeconds > 0)) {
+    return saveStoredAiCooldown({
+      cooldownUntil: data.cooldownUntil,
+      cooldownRemainingSeconds: data.cooldownRemainingSeconds,
+      reason: data.cooldownReason,
+      category: data.circuitState,
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data?.cooldownActive && (data.cooldownUntil || data.cooldownRemainingSeconds > 0)) {
-      return saveStoredAiCooldown({
-        cooldownUntil: data.cooldownUntil,
-        cooldownRemainingSeconds: data.cooldownRemainingSeconds,
-        reason: data.cooldownReason,
-        category: data.circuitState,
-      });
-    }
-    clearStoredAiCooldown();
-    return { active: false, cooldownUntil: null, remainingSeconds: 0, reason: null };
-  } catch {
-    return null;
   }
+  clearStoredAiCooldown();
+  return { active: false, cooldownUntil: null, remainingSeconds: 0, reason: null };
 }

@@ -103,13 +103,31 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
     return () => clearInterval(t);
   }, [resendCooldown]);
 
+  const normalizeClientMobile = (raw: string): string => {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2);
+    if (digits.length === 11 && digits.startsWith('0')) return digits.slice(1);
+    return digits;
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setInfoMsg(null);
+
+    const normalizedMobile = normalizeClientMobile(mobile);
+    if (!/^[6-9]\d{9}$/.test(normalizedMobile) && !/^\d{10,15}$/.test(normalizedMobile)) {
+      setErrorMsg('Please enter a valid 10-digit registered mobile number.');
+      return;
+    }
+    if (!password.trim()) {
+      setErrorMsg('Administrator password is required.');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await loginAdminWithMobile(mobile, password);
+      await loginAdminWithMobile(normalizedMobile, password);
       onSuccess();
     } catch (err: any) {
       setErrorMsg(err?.message || 'Invalid mobile number or password.');
@@ -454,7 +472,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
               )}
 
               {step === 'login' && (
-                <form onSubmit={handleLogin} className="space-y-4">
+                <form onSubmit={handleLogin} noValidate className="space-y-4">
                   <div>
                     <label className="block text-xs font-semibold text-on-surface mb-1">
                       Registered Mobile Number

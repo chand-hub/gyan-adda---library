@@ -3,6 +3,7 @@ import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { Clock, Edit2, Plus, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
 import { db } from '../../lib/firebase';
 import { LibraryShift, StudentRecord } from '../../types/library';
+import { safeApiFetch } from '../../lib/safeFetch';
 
 interface ShiftManagementPanelProps {
   students: StudentRecord[];
@@ -59,7 +60,7 @@ export const ShiftManagementPanel: React.FC<ShiftManagementPanelProps> = ({
       const token = await getIdToken();
       if (!token) return;
       if (students.length > 0) {
-        await fetch('/api/admin/attendance/sync-students', {
+        await safeApiFetch('/api/admin/attendance/sync-students', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -82,25 +83,24 @@ export const ShiftManagementPanel: React.FC<ShiftManagementPanelProps> = ({
               status: s.status,
             })),
           }),
-        }).catch(() => {});
+        });
       }
 
       const [shiftRes, attRes] = await Promise.all([
-        fetch('/api/admin/shifts', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/api/admin/attendance', { headers: { Authorization: `Bearer ${token}` } }),
+        safeApiFetch<any>('/api/admin/shifts', { headers: { Authorization: `Bearer ${token}` } }),
+        safeApiFetch<any>('/api/admin/attendance', { headers: { Authorization: `Bearer ${token}` } }),
       ]);
-      if (shiftRes.ok) {
-        const data = await shiftRes.json();
+      if (shiftRes.ok && shiftRes.data) {
+        const data = shiftRes.data;
         setShifts(data.shifts || []);
         setAssignments(data.assignments || {});
         if (!bulkShiftId && data.shifts?.[0]?.id) {
           setBulkShiftId(data.shifts[0].id);
         }
       }
-      if (attRes.ok) {
-        const attData = await attRes.json();
-        if (Array.isArray(attData.students)) {
-          setDirectoryStudents(attData.students);
+      if (attRes.ok && attRes.data) {
+        if (Array.isArray(attRes.data.students)) {
+          setDirectoryStudents(attRes.data.students);
         }
       }
     } catch (err: any) {
@@ -166,7 +166,7 @@ export const ShiftManagementPanel: React.FC<ShiftManagementPanelProps> = ({
     try {
       const token = await getIdToken();
       if (!token) throw new Error('Authentication session required.');
-      const res = await fetch('/api/admin/shifts', {
+      const res = await safeApiFetch<any>('/api/admin/shifts', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -181,8 +181,8 @@ export const ShiftManagementPanel: React.FC<ShiftManagementPanelProps> = ({
           active,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to save shift.');
+      const data = res.data;
+      if (!res.ok || !data?.shift) throw new Error(res.error || 'Failed to save shift.');
 
       if (hasFirebaseSession && data.shift?.id) {
         setDoc(doc(db, 'shifts', data.shift.id), {
@@ -206,11 +206,11 @@ export const ShiftManagementPanel: React.FC<ShiftManagementPanelProps> = ({
     try {
       const token = await getIdToken();
       if (!token) return;
-      const res = await fetch(`/api/admin/shifts/${encodeURIComponent(sh.id)}`, {
+      const res = await safeApiFetch<any>(`/api/admin/shifts/${encodeURIComponent(sh.id)}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error('Failed to delete shift.');
+      if (!res.ok) throw new Error(res.error || 'Failed to delete shift.');
       onNotify('ok', `Shift "${sh.name}" removed.`);
       await loadShifts();
     } catch (err: any) {
@@ -222,7 +222,7 @@ export const ShiftManagementPanel: React.FC<ShiftManagementPanelProps> = ({
     try {
       const token = await getIdToken();
       if (!token) return;
-      const res = await fetch('/api/admin/shifts/assign-student', {
+      const res = await safeApiFetch<any>('/api/admin/shifts/assign-student', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -237,8 +237,8 @@ export const ShiftManagementPanel: React.FC<ShiftManagementPanelProps> = ({
           shiftId,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Shift assignment failed.');
+      const data = res.data;
+      if (!res.ok || !data?.assignment) throw new Error(res.error || 'Shift assignment failed.');
 
       if (hasFirebaseSession && student.id) {
         updateDoc(doc(db, 'students', student.id), {

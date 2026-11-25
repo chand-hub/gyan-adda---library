@@ -35,6 +35,7 @@ import {
   saveStoredAiCooldown,
   SharedAiCooldownState,
 } from '../../lib/aiClient';
+import { safeApiFetch } from '../../lib/safeFetch';
 
 interface AIPdfImportPanelProps {
   exams: ExamCategory[];
@@ -264,21 +265,24 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
       try {
         const token = await getIdToken();
         if (!token || cancelled) return;
-        const res = await fetch('/api/exams/import/jobs', {
+        const res = await safeApiFetch<any>('/api/exams/import/jobs', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
+        if (!res.ok || !res.data || cancelled) return;
+        const data = res.data;
         const serverJobs = Array.isArray(data?.jobs) ? data.jobs : [];
         const activeOrPaused = serverJobs.find(
           (j: JobSnapshot) => j.status === 'processing' || j.status === 'queued' || j.status === 'paused'
         );
         if (activeOrPaused && !cancelled) {
-          const fullRes = await fetch(`/api/exams/import/status/${activeOrPaused.jobId}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (fullRes.ok && !cancelled) {
-            setActiveJob(await fullRes.json());
+          const fullRes = await safeApiFetch<JobSnapshot>(
+            `/api/exams/import/status/${activeOrPaused.jobId}`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+          if (fullRes.ok && fullRes.data && !cancelled) {
+            setActiveJob(fullRes.data);
           }
         }
       } catch {
@@ -510,12 +514,11 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
       try {
         const token = await getIdToken();
         if (!token) return;
-        const res = await fetch(`/api/exams/import/status/${activeJob.jobId}`, {
+        const res = await safeApiFetch<JobSnapshot>(`/api/exams/import/status/${activeJob.jobId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (res.ok) {
-          const snap = (await res.json()) as JobSnapshot;
-          setActiveJob(snap);
+        if (res.ok && res.data) {
+          setActiveJob(res.data);
         }
       } catch {
         // transient poll error ignored
@@ -553,7 +556,7 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
         setUploadingState(`Uploading ${file.name} (${fIdx + 1}/${selectedFiles.length})...`);
         setUploadProgress(0);
 
-        const initRes = await fetch('/api/exams/upload/init', {
+        const initRes = await safeApiFetch<any>('/api/exams/upload/init', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -565,8 +568,8 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
             totalChunks,
           }),
         });
-        const initData = await initRes.json();
-        if (!initRes.ok) throw new Error(initData.error || 'Upload init failed.');
+        const initData = initRes.data;
+        if (!initRes.ok || !initData?.uploadId) throw new Error(initRes.error || 'Upload init failed.');
 
         const uploadId = initData.uploadId;
 
@@ -575,7 +578,7 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
           const buf = await slice.arrayBuffer();
           const b64 = arrayBufferToBase64(buf);
 
-          const cRes = await fetch('/api/exams/upload/chunk', {
+          const cRes = await safeApiFetch('/api/exams/upload/chunk', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -588,8 +591,7 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
             }),
           });
           if (!cRes.ok) {
-            const errC = await cRes.json().catch(() => ({}));
-            throw new Error(errC.error || `Chunk ${c + 1} upload failed.`);
+            throw new Error(cRes.error || `Chunk ${c + 1} upload failed.`);
           }
           setUploadProgress(Math.round(((c + 1) / totalChunks) * 100));
         }
@@ -603,7 +605,7 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
             : `Initializing adaptive batch OCR queue for ${file.name}...`
         );
 
-        const finRes = await fetch('/api/exams/upload/finalize', {
+        const finRes = await safeApiFetch<any>('/api/exams/upload/finalize', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -619,8 +621,8 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
             skipPages: matchingResume?.skipPages || [],
           }),
         });
-        const finData = await finRes.json();
-        if (!finRes.ok) throw new Error(finData.error || 'Finalize failed.');
+        const finData = finRes.data;
+        if (!finRes.ok || !finData?.jobId) throw new Error(finRes.error || 'Finalize failed.');
 
         await setDoc(
           doc(db, 'uploaded_documents', `doc_${finData.jobId}`),
@@ -668,11 +670,11 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
           setResumeTarget(null);
         }
 
-        const statusRes = await fetch(`/api/exams/import/status/${finData.jobId}`, {
+        const statusRes = await safeApiFetch<JobSnapshot>(`/api/exams/import/status/${finData.jobId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (statusRes.ok) {
-          setActiveJob(await statusRes.json());
+        if (statusRes.ok && statusRes.data) {
+          setActiveJob(statusRes.data);
         }
       }
 
@@ -703,7 +705,7 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
     if (!token) return;
     setControlBusy(action === 'retry_batch' ? `batch_${batchIndex}` : action);
     try {
-      const res = await fetch('/api/exams/import/control', {
+      const res = await safeApiFetch<any>('/api/exams/import/control', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -711,19 +713,19 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
         },
         body: JSON.stringify({ jobId: activeJob.jobId, action, batchIndex }),
       });
-      const payload = await res.json();
+      const payload = res.data || {};
       if (!res.ok) {
         if (payload?.cooldownActive) {
           setCooldown(
             saveStoredAiCooldown({
               cooldownUntil: payload.cooldownUntil,
               cooldownRemainingSeconds: payload.cooldownRemainingSeconds,
-              reason: payload.error,
+              reason: res.error || payload.error,
               category: payload.errorCategory,
             })
           );
         }
-        onNotify('err', payload.error || `Failed to ${action} job.`);
+        onNotify('err', res.error || payload.error || `Failed to ${action} job.`);
         return;
       }
       setActiveJob(payload as JobSnapshot);
@@ -738,13 +740,12 @@ export const AIPdfImportPanel: React.FC<AIPdfImportPanelProps> = ({
     const token = await getIdToken();
     if (!token) return;
     try {
-      const res = await fetch(`/api/exams/import/status/${saved.id}`, {
+      const res = await safeApiFetch<JobSnapshot>(`/api/exams/import/status/${saved.id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const snap = (await res.json()) as JobSnapshot;
+      if (res.ok && res.data) {
         setResumeTarget(null);
-        setActiveJob(snap);
+        setActiveJob(res.data);
         return;
       }
 

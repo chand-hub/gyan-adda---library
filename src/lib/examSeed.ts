@@ -1,5 +1,6 @@
 import { collection, doc, getDoc, getDocs, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
+import { safeApiFetch } from './safeFetch';
 import {
   CurrentAffairsCategory,
   ExamCategory,
@@ -786,7 +787,7 @@ export async function seedExamPlatformData(idToken: string | null): Promise<{
 
   if (idToken) {
     try {
-      const res = await fetch('/api/exams/seal-questions', {
+      const res = await safeApiFetch<any>('/api/exams/seal-questions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -794,9 +795,8 @@ export async function seedExamPlatformData(idToken: string | null): Promise<{
         },
         body: JSON.stringify({ items: allToSeal }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        (data.sealed || []).forEach((s: any) => {
+      if (res.ok && res.data) {
+        (res.data.sealed || []).forEach((s: any) => {
           sealedMap.set(s.id, {
             fingerprint: s.fingerprint,
             normalizedText: s.normalizedText,

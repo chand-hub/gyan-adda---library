@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { AdminLoginActivity } from '../../types/library';
-import { readJsonSafe } from '../../lib/safeFetch';
+import { safeApiFetch } from '../../lib/safeFetch';
 
 interface AdminProfilePanelProps {
   mode: 'profile' | 'password';
@@ -54,10 +54,9 @@ export const AdminProfilePanel: React.FC<AdminProfilePanelProps> = ({ mode, onNo
     try {
       const token = await getIdToken();
       if (!token) return;
-      const res = await fetch('/api/admin/profile', {
+      const parsed = await safeApiFetch<AdminProfileResponse>('/api/admin/profile', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const parsed = await readJsonSafe<AdminProfileResponse>(res);
       if (parsed.ok && parsed.data) {
         const json = parsed.data;
         setData(json);
@@ -85,19 +84,21 @@ export const AdminProfilePanel: React.FC<AdminProfilePanelProps> = ({ mode, onNo
     try {
       const token = await getIdToken();
       if (!token) throw new Error('Authentication required.');
-      const res = await fetch('/api/admin/profile/init-credentials', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          mobile: newMobile.trim(),
-          newPassword: initPassword,
-          displayName: displayName.trim(),
-        }),
-      });
-      const parsed = await readJsonSafe<{ error?: string; admin?: { mobile?: string } }>(res);
+      const parsed = await safeApiFetch<{ error?: string; admin?: { mobile?: string } }>(
+        '/api/admin/profile/init-credentials',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            mobile: newMobile.trim(),
+            newPassword: initPassword,
+            displayName: displayName.trim(),
+          }),
+        }
+      );
       if (!parsed.ok || !parsed.data) throw new Error(parsed.error || 'Failed to save mobile credentials.');
       const json = parsed.data;
       setInitPassword('');
@@ -121,7 +122,7 @@ export const AdminProfilePanel: React.FC<AdminProfilePanelProps> = ({ mode, onNo
     try {
       const token = await getIdToken();
       if (!token) throw new Error('Authentication required.');
-      const res = await fetch('/api/admin/change-password', {
+      const parsed = await safeApiFetch<{ error?: string }>('/api/admin/change-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -129,7 +130,6 @@ export const AdminProfilePanel: React.FC<AdminProfilePanelProps> = ({ mode, onNo
         },
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-      const parsed = await readJsonSafe<{ error?: string }>(res);
       if (!parsed.ok) throw new Error(parsed.error || 'Unable to update password.');
       setCurrentPassword('');
       setNewPassword('');
@@ -149,19 +149,21 @@ export const AdminProfilePanel: React.FC<AdminProfilePanelProps> = ({ mode, onNo
     try {
       const token = await getIdToken();
       if (!token) throw new Error('Authentication required.');
-      const res = await fetch('/api/admin/change-mobile', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          currentPassword: verifyPwdForMobile,
-          newMobile: newMobile.trim(),
-          displayName: displayName.trim(),
-        }),
-      });
-      const parsed = await readJsonSafe<{ error?: string; admin?: { mobile?: string } }>(res);
+      const parsed = await safeApiFetch<{ error?: string; admin?: { mobile?: string } }>(
+        '/api/admin/change-mobile',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            currentPassword: verifyPwdForMobile,
+            newMobile: newMobile.trim(),
+            displayName: displayName.trim(),
+          }),
+        }
+      );
       if (!parsed.ok || !parsed.data) throw new Error(parsed.error || 'Unable to update mobile number.');
       const json = parsed.data;
       setVerifyPwdForMobile('');

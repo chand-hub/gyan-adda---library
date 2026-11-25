@@ -16,6 +16,7 @@ import {
 import { ExamQuestion, TestAttemptRecord, TestType } from '../../types/library';
 import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { safeApiFetch } from '../../lib/safeFetch';
 
 export interface ActiveTestConfig {
   title: string;
@@ -85,7 +86,7 @@ export const OnlineExamRunner: React.FC<OnlineExamRunnerProps> = ({
       try {
         const token = await getIdToken();
         if (!token) return;
-        const res = await fetch('/api/exams/start-attempt', {
+        const res = await safeApiFetch<any>('/api/exams/start-attempt', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -98,8 +99,8 @@ export const OnlineExamRunner: React.FC<OnlineExamRunnerProps> = ({
             questionIds: config.questions.map((q) => q.id),
           }),
         });
-        const data = await res.json();
-        if (!res.ok || !active) return;
+        const data = res.data;
+        if (!res.ok || !data || !active) return;
 
         const id = data.attemptId;
         setAttemptId(id);
@@ -238,7 +239,7 @@ export const OnlineExamRunner: React.FC<OnlineExamRunnerProps> = ({
     try {
       const token = await getIdToken();
       if (!token) throw new Error('Authentication required.');
-      const res = await fetch('/api/exams/check-practice-answer', {
+      const res = await safeApiFetch<any>('/api/exams/check-practice-answer', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -251,8 +252,8 @@ export const OnlineExamRunner: React.FC<OnlineExamRunnerProps> = ({
           mode: config.mode,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not verify practice answer.');
+      const data = res.data;
+      if (!res.ok || !data) throw new Error(res.error || 'Could not verify practice answer.');
       setPracticeChecks((prev) => ({
         ...prev,
         [currentQuestion.id]: {
@@ -279,7 +280,7 @@ export const OnlineExamRunner: React.FC<OnlineExamRunnerProps> = ({
       if (!token) throw new Error('Session expired. Please sign in again.');
       const finalAttemptId = attemptId || `att_${Date.now()}`;
 
-      const scoreRes = await fetch('/api/exams/score-attempt', {
+      const scoreRes = await safeApiFetch<any>('/api/exams/score-attempt', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -304,8 +305,8 @@ export const OnlineExamRunner: React.FC<OnlineExamRunnerProps> = ({
         }),
       });
 
-      const scored = await scoreRes.json();
-      if (!scoreRes.ok) throw new Error(scored.error || 'Server scoring failed.');
+      const scored = scoreRes.data;
+      if (!scoreRes.ok || !scored) throw new Error(scoreRes.error || 'Server scoring failed.');
 
       const submittedAt = new Date().toISOString();
       const attemptPayload: Omit<TestAttemptRecord, 'id'> = {

@@ -38,6 +38,7 @@ import {
   reportFirestoreError,
 } from '../../lib/firebase';
 import { generateAiRequestId } from '../../lib/aiClient';
+import { safeApiFetch } from '../../lib/safeFetch';
 import {
   FeePaymentRecord,
   FeeReminderRecord,
@@ -550,15 +551,14 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
     try {
       const headers = await authHeaders();
       const [cfgRes, stateRes] = await Promise.all([
-        fetch('/api/fees/whatsapp-config', { headers }),
-        fetch('/api/fees/state', { headers }),
+        safeApiFetch<WhatsAppConfigStatus>('/api/fees/whatsapp-config', { headers }),
+        safeApiFetch<any>('/api/fees/state', { headers }),
       ]);
-      if (cfgRes.ok) {
-        setWaConfig(await cfgRes.json());
+      if (cfgRes.ok && cfgRes.data) {
+        setWaConfig(cfgRes.data);
       }
-      if (stateRes.ok) {
-        const data = await stateRes.json();
-        if (data.whatsappConfig) setWaConfig(data.whatsappConfig);
+      if (stateRes.ok && stateRes.data) {
+        if (stateRes.data.whatsappConfig) setWaConfig(stateRes.data.whatsappConfig);
       }
     } catch {
       // non-fatal during startup
@@ -576,7 +576,7 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
     (async () => {
       try {
         const headers = await authHeaders();
-        const res = await fetch('/api/fees/sync', {
+        const res = await safeApiFetch('/api/fees/sync', {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -703,7 +703,7 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
     try {
       const headers = await authHeaders();
       const id = sanitizeId(editingFee?.id || selectedStudentDocId || `fee_${Date.now()}`);
-      const res = await fetch('/api/fees/upsert-student', {
+      const res = await safeApiFetch<any>('/api/fees/upsert-student', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -724,8 +724,8 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
           whatsappConsent: formWhatsappConsent,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to save student fee profile.');
+      const data = res.data;
+      if (!res.ok || !data?.studentFee) throw new Error(res.error || 'Failed to save student fee profile.');
 
       await persistFeeDocToFirestore(data.studentFee);
       await logAuditEvent(
@@ -756,7 +756,7 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
     setBusyAction('payment');
     try {
       const headers = await authHeaders();
-      const res = await fetch('/api/fees/record-payment', {
+      const res = await safeApiFetch<any>('/api/fees/record-payment', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -768,8 +768,8 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
           notes: payNotes.trim() || undefined,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to record payment.');
+      const data = res.data;
+      if (!res.ok || !data?.studentFee) throw new Error(res.error || 'Failed to record payment.');
 
       await persistStateChangesToFirestore({
         studentFees: [data.studentFee],
@@ -819,13 +819,13 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
     setBusyAction(`ctrl_${fee.id}`);
     try {
       const headers = await authHeaders();
-      const res = await fetch('/api/fees/student-control', {
+      const res = await safeApiFetch<any>('/api/fees/student-control', {
         method: 'POST',
         headers,
         body: JSON.stringify({ studentFeeId: fee.id, action }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Control action failed.');
+      const data = res.data;
+      if (!res.ok || !data?.studentFee) throw new Error(res.error || 'Control action failed.');
 
       await persistFeeDocToFirestore(data.studentFee);
       await logAuditEvent(
@@ -858,7 +858,7 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
     setBusyAction('send_manual');
     try {
       const headers = await authHeaders();
-      const res = await fetch('/api/fees/send-reminder', {
+      const res = await safeApiFetch<any>('/api/fees/send-reminder', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -866,8 +866,8 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
           idempotencyKey: generateAiRequestId('wa'),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to dispatch WhatsApp reminder.');
+      const data = res.data || {};
+      if (!res.ok) throw new Error(res.error || 'Failed to dispatch WhatsApp reminder.');
 
       await persistStateChangesToFirestore({
         studentFees: data.studentFee ? [data.studentFee] : undefined,
@@ -897,9 +897,9 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
     setBusyAction(endpoint);
     try {
       const headers = await authHeaders();
-      const res = await fetch(endpoint, { method: 'POST', headers });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `${label} failed.`);
+      const res = await safeApiFetch<any>(endpoint, { method: 'POST', headers });
+      const data = res.data || {};
+      if (!res.ok) throw new Error(res.error || `${label} failed.`);
 
       if (data.state) {
         await persistStateChangesToFirestore({
@@ -930,13 +930,13 @@ export const FeeReminderPanel: React.FC<FeeReminderPanelProps> = ({
     setBusyAction('settings');
     try {
       const headers = await authHeaders();
-      const res = await fetch('/api/fees/settings', {
+      const res = await safeApiFetch<any>('/api/fees/settings', {
         method: 'POST',
         headers,
         body: JSON.stringify(nextSettings),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to update settings.');
+      const data = res.data;
+      if (!res.ok || !data?.settings) throw new Error(res.error || 'Failed to update settings.');
 
       setSettings(data.settings);
       setSettingsDraft(data.settings);

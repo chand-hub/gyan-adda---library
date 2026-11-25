@@ -612,14 +612,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logoutAdminSession = async () => {
     if (adminToken) {
-      try {
-        await fetch('/api/admin/auth/logout', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${adminToken}` },
-        });
-      } catch {
-        // ignore network errors during logout
-      }
+      await safeApiFetch('/api/admin/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
     }
     setAdminToken(null);
     setAdminSession(null);

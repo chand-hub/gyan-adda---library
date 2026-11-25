@@ -51,6 +51,7 @@ import {
   saveStoredAiCooldown,
   SharedAiCooldownState,
 } from '../../lib/aiClient';
+import { safeApiFetch } from '../../lib/safeFetch';
 
 interface ExamManagementPanelProps {
   exams: ExamCategory[];
@@ -355,7 +356,7 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
         optD.trim(),
       ];
 
-      const sealRes = await fetch('/api/exams/seal-questions', {
+      const sealRes = await safeApiFetch<any>('/api/exams/seal-questions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -373,8 +374,8 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
           ],
         }),
       });
-      const sealData = await sealRes.json();
-      if (!sealRes.ok || !sealData.sealed?.[0]) throw new Error(sealData.error || 'Sealing failed.');
+      const sealData = sealRes.data;
+      if (!sealRes.ok || !sealData?.sealed?.[0]) throw new Error(sealRes.error || 'Sealing failed.');
       const sealed = sealData.sealed[0];
 
       const batch = writeBatch(db);
@@ -460,7 +461,7 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
         editOpts[3].trim(),
       ];
 
-      const sealRes = await fetch('/api/exams/seal-questions', {
+      const sealRes = await safeApiFetch<any>('/api/exams/seal-questions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -478,8 +479,8 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
           ],
         }),
       });
-      const sealData = await sealRes.json();
-      if (!sealRes.ok || !sealData.sealed?.[0]) throw new Error(sealData.error || 'Sealing failed.');
+      const sealData = sealRes.data;
+      if (!sealRes.ok || !sealData?.sealed?.[0]) throw new Error(sealRes.error || 'Sealing failed.');
       const sealed = sealData.sealed[0];
 
       const batch = writeBatch(db);
@@ -608,7 +609,7 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
         const slice = parsedRows.slice(offset, offset + chunkSize);
         const ids = slice.map((_, idx) => `q_blk_${Date.now()}_${offset + idx}`);
 
-        const sealRes = await fetch('/api/exams/seal-questions', {
+        const sealRes = await safeApiFetch<any>('/api/exams/seal-questions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -624,9 +625,9 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
             })),
           }),
         });
-        const sealData = await sealRes.json();
-        if (!sealRes.ok || !Array.isArray(sealData.sealed)) {
-          throw new Error(sealData.error || 'Bulk sealing failed.');
+        const sealData = sealRes.data;
+        if (!sealRes.ok || !Array.isArray(sealData?.sealed)) {
+          throw new Error(sealRes.error || 'Bulk sealing failed.');
         }
 
         const batch = writeBatch(db);
@@ -683,7 +684,7 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
       const token = await getIdToken();
       if (!token) throw new Error('Authentication required.');
       const requestId = generateAiRequestId('admin_mcq');
-      const res = await fetch('/api/exams/ai-generate-questions', {
+      const res = await safeApiFetch<any>('/api/exams/ai-generate-questions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -703,19 +704,19 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
           includeKeys: true,
         }),
       });
-      const data = await res.json();
+      const data = res.data || {};
       if (!res.ok) {
         if (data?.cooldownActive) {
           setAiCooldown(
             saveStoredAiCooldown({
               cooldownUntil: data.cooldownUntil,
               cooldownRemainingSeconds: data.cooldownRemainingSeconds,
-              reason: data.error,
+              reason: res.error || data.error,
               category: data.errorCategory,
             })
           );
         }
-        throw new Error(data.error || 'AI generation failed.');
+        throw new Error(res.error || data.error || 'AI generation failed.');
       }
       const existingFps = new Set(questions.map((q) => q.fingerprint));
       const drafts: DraftAiItem[] = (data.questions || []).filter(
@@ -821,7 +822,7 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
       const token = await getIdToken();
       if (!token) throw new Error('Authentication required.');
       const requestId = generateAiRequestId('ca');
-      const res = await fetch('/api/current-affairs/collect', {
+      const res = await safeApiFetch<any>('/api/current-affairs/collect', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -830,19 +831,19 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
         },
         body: JSON.stringify({ date: caDate, requestId }),
       });
-      const bundle = await res.json();
+      const bundle = res.data || {};
       if (!res.ok) {
         if (bundle?.cooldownActive) {
           setAiCooldown(
             saveStoredAiCooldown({
               cooldownUntil: bundle.cooldownUntil,
               cooldownRemainingSeconds: bundle.cooldownRemainingSeconds,
-              reason: bundle.error,
+              reason: res.error || bundle.error,
               category: bundle.errorCategory,
             })
           );
         }
-        throw new Error(bundle.error || 'Current affairs collection failed.');
+        throw new Error(res.error || bundle.error || 'Current affairs collection failed.');
       }
 
       const items: any[] = bundle.items || [];
@@ -912,7 +913,7 @@ export const ExamManagementPanel: React.FC<ExamManagementPanelProps> = ({
     const token = await getIdToken();
     if (!token) return;
     const next = !caPaused;
-    const res = await fetch('/api/current-affairs/schedule', {
+    const res = await safeApiFetch('/api/current-affairs/schedule', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

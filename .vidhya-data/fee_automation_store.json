@@ -1,0 +1,21 @@
+{
+  "settings": {
+    "id": "fee_automation",
+    "autoReminderEnabled": true,
+    "globalPaused": false,
+    "reminderIntervalHours": 24,
+    "timezone": "Asia/Kolkata",
+    "sendWindowStartHour": 0,
+    "sendWindowEndHour": 24,
+    "triggerOnDueOrOverdueOnly": true,
+    "templateName": "vidhya_fee_reminder",
+    "languageCode": "en",
+    "messageTemplatePreview": "Hello, this is a fee reminder from GYAN ADDA LIBRARY for {{student_name}} ({{class_name}}). Monthly Fee: Rs.{{monthly_fee}}, Paid: Rs.{{total_paid}}, Pending Balance: Rs.{{due_amount}}, Due Date: {{due_date}}. Please clear your balance at the desk or online. Reply STOP to opt out.",
+    "updatedAt": "2026-11-25T15:24:19.939Z"
+  },
+  "studentFees": {},
+  "payments": [],
+  "reminders": [],
+  "whatsappLogs": [],
+  "processedIdempotencyKeys": {}
+}

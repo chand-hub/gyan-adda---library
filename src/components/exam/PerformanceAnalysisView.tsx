@@ -33,6 +33,7 @@ import {
   readStoredAiCooldown,
   saveStoredAiCooldown,
 } from '../../lib/aiClient';
+import { safeApiFetch } from '../../lib/safeFetch';
 
 interface PerformanceAnalysisViewProps {
   attempt: TestAttemptRecord;
@@ -205,7 +206,7 @@ export const PerformanceAnalysisView: React.FC<PerformanceAnalysisViewProps> = (
     try {
       const token = await getIdToken();
       if (!token) throw new Error('Sign in required.');
-      const res = await fetch('/api/exams/ai-performance-advice', {
+      const res = await safeApiFetch<any>('/api/exams/ai-performance-advice', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -231,19 +232,19 @@ export const PerformanceAnalysisView: React.FC<PerformanceAnalysisViewProps> = (
           slowQuestionCount: (attempt.slowQuestionIds || []).length,
         }),
       });
-      const data = await res.json();
+      const data = res.data || {};
       if (!res.ok) {
         if (data.cooldownUntil || data.cooldownRemainingSeconds > 0) {
           setAiCooldown(
             saveStoredAiCooldown({
               cooldownUntil: data.cooldownUntil,
               cooldownRemainingSeconds: data.cooldownRemainingSeconds,
-              reason: data.error,
+              reason: res.error || data.error,
               category: data.errorCategory,
             })
           );
         }
-        throw new Error(data.error || 'Could not generate Gemini study plan.');
+        throw new Error(res.error || data.error || 'Could not generate Gemini study plan.');
       }
       setAiAdvice(data.recommendations);
 

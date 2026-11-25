@@ -62,7 +62,7 @@ import {
   reportFirestoreError,
 } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { readJsonSafe } from '../lib/safeFetch';
+import { safeApiFetch } from '../lib/safeFetch';
 import { formatCooldownRemaining, saveStoredAiCooldown, clearStoredAiCooldown } from '../lib/aiClient';
 import { downloadCsv } from '../lib/receiptPdf';
 import { BrandLogo } from './BrandLogo';
@@ -280,10 +280,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     try {
       const token = await getIdToken();
       if (!token) return;
-      const res = await fetch('/api/admin/demo/dashboard', {
+      const parsed = await safeApiFetch<SyntheticDemoPayload>('/api/admin/demo/dashboard', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const parsed = await readJsonSafe<SyntheticDemoPayload>(res);
       if (!parsed.ok || !parsed.data) {
         throw new Error(parsed.error || 'Unable to load synthetic demo sandbox.');
       }
@@ -438,10 +437,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     try {
       const token = await getIdToken();
       if (!token) return;
-      const res = await fetch('/api/admin/system-status', {
+      const parsed = await safeApiFetch<SystemStatusResponse>('/api/admin/system-status', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const parsed = await readJsonSafe<SystemStatusResponse>(res);
       if (!parsed.ok || !parsed.data) throw new Error(parsed.error || 'Unable to load system status.');
       setSysStatus(parsed.data);
     } catch (err: any) {
@@ -458,10 +456,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       try {
         const token = await getIdToken();
         if (!token) return;
-        const res = await fetch('/api/admin/attendance', {
+        const parsed = await safeApiFetch<any>('/api/admin/attendance', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const parsed = await readJsonSafe<any>(res);
         if (parsed.ok && parsed.data && active) {
           setServerAttSummary(parsed.data);
         }
@@ -486,7 +483,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     try {
       const token = await getIdToken();
       if (!token) throw new Error('Authentication token unavailable.');
-      const res = await fetch('/api/admin/ai-verify-quota', {
+      const parsed = await safeApiFetch<any>('/api/admin/ai-verify-quota', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -494,7 +491,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         },
         body: JSON.stringify({ clearCooldown: true }),
       });
-      const parsed = await readJsonSafe<any>(res);
       const data = parsed.data || {};
       if (data.available) {
         clearStoredAiCooldown();

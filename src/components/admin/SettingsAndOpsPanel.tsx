@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { db, logAuditEvent } from '../../lib/firebase';
 import { seedDemoDataset } from '../../lib/demoSeed';
+import { safeApiFetch } from '../../lib/safeFetch';
 import {
   ALL_STAFF_PERMISSIONS,
   AnnouncementRecord,
@@ -170,11 +171,11 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
     try {
       const token = await getIdToken();
       if (!token) return;
-      const res = await fetch('/api/admin/public-content', {
+      const res = await safeApiFetch<any>('/api/admin/public-content', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const d = await res.json();
+      if (res.ok && res.data) {
+        const d = res.data;
         if (d.settings) {
           setServerSettings(d.settings);
           if (Array.isArray(d.settings.facilityItems)) {
@@ -231,11 +232,11 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
       try {
         const token = await getIdToken();
         if (!token) return;
-        const res = await fetch('/api/notifications/providers', {
+        const res = await safeApiFetch<ProviderInfo>('/api/notifications/providers', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (res.ok) {
-          setProviders(await res.json());
+        if (res.ok && res.data) {
+          setProviders(res.data);
         }
       } catch {
         // Ignore network failure
@@ -355,14 +356,14 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
     try {
       const token = await getIdToken();
       if (token) {
-        await fetch(`/api/admin/enquiries/${encodeURIComponent(enq.id)}`, {
+        await safeApiFetch(`/api/admin/enquiries/${encodeURIComponent(enq.id)}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({ status }),
-        }).catch(() => {});
+        });
       }
       if (hasFirebaseSession && !enq.id.startsWith('enq_')) {
         await updateDoc(doc(db, 'enquiries', enq.id), {
@@ -392,7 +393,7 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
       };
       let savedId = editingGallery?.id || '';
       if (token) {
-        const res = await fetch('/api/admin/gallery', {
+        const res = await safeApiFetch<any>('/api/admin/gallery', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -400,8 +401,8 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
           },
           body: JSON.stringify(payload),
         });
-        const d = await res.json();
-        if (!res.ok) throw new Error(d.error || 'Failed saving gallery item.');
+        const d = res.data || {};
+        if (!res.ok) throw new Error(res.error || 'Failed saving gallery item.');
         savedId = d.item?.id || savedId;
       }
       if (hasFirebaseSession) {
@@ -442,7 +443,7 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
     try {
       const token = await getIdToken();
       if (token) {
-        await fetch('/api/admin/gallery', {
+        await safeApiFetch('/api/admin/gallery', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -465,7 +466,7 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
     try {
       const token = await getIdToken();
       if (token) {
-        await fetch(`/api/admin/gallery/${encodeURIComponent(item.id)}`, {
+        await safeApiFetch(`/api/admin/gallery/${encodeURIComponent(item.id)}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -484,7 +485,7 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
     const token = await getIdToken();
     const availableNames = nextItems.filter((f) => f.available).map((f) => f.name);
     if (token) {
-      const res = await fetch('/api/admin/public-settings', {
+      const res = await safeApiFetch('/api/admin/public-settings', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -495,7 +496,7 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
           facilities: availableNames,
         }),
       });
-      if (!res.ok) throw new Error('Unable to update facilities.');
+      if (!res.ok) throw new Error(res.error || 'Unable to update facilities.');
     }
     if (hasFirebaseSession) {
       await setDoc(
@@ -597,7 +598,7 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
       };
       const token = await getIdToken();
       if (token) {
-        const res = await fetch('/api/admin/public-settings', {
+        const res = await safeApiFetch('/api/admin/public-settings', {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -605,7 +606,7 @@ export const SettingsAndOpsPanel: React.FC<SettingsAndOpsPanelProps> = ({
           },
           body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error('Unable to save public website settings.');
+        if (!res.ok) throw new Error(res.error || 'Unable to save public website settings.');
       }
       if (hasFirebaseSession) {
         await setDoc(doc(db, 'library_settings', 'main'), {

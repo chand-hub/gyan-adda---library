@@ -894,6 +894,17 @@ export class AdminSystemEngine {
     userAgent?: string;
   }) {
     const mobile = normalizeMobileNumber(input.mobile);
+    if (!isValidIndianOrIntlMobile(mobile)) {
+      throw Object.assign(new Error('Please enter a valid 10-digit registered mobile number.'), {
+        statusCode: 400,
+      });
+    }
+    const password = String(input.password || '');
+    if (!password.trim()) {
+      throw Object.assign(new Error('Administrator password is required.'), {
+        statusCode: 400,
+      });
+    }
     if (!this.store.admin) {
       throw Object.assign(
         new Error('Administrator credentials are not configured yet. Complete first-run setup first.'),
@@ -901,7 +912,7 @@ export class AdminSystemEngine {
       );
     }
     const okMobile = mobile === this.store.admin.mobile;
-    const okPwd = verifyPasswordScrypt(String(input.password || ''), this.store.admin.passwordHash);
+    const okPwd = verifyPasswordScrypt(password, this.store.admin.passwordHash);
     if (!okMobile || !okPwd) {
       this.recordLoginActivity({
         mobile: mobile || String(input.mobile || '').slice(0, 20),

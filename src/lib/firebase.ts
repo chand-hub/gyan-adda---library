@@ -294,6 +294,13 @@ export function handleFirestoreError(
 }
 
 export async function testConnection(): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    connectionSnapshot.state = 'offline';
+    connectionSnapshot.lastError = 'Browser reported network offline.';
+    connectionSnapshot.lastCheckedAt = new Date().toISOString();
+    emitConnectionSnapshot();
+    return false;
+  }
   if (connectionProbeInFlight) return connectionProbeInFlight;
 
   connectionProbeInFlight = (async () => {
@@ -334,7 +341,9 @@ if (typeof window !== 'undefined') {
   });
 }
 
-testConnection();
+if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+  testConnection();
+}
 
 export async function logAuditEvent(
   action: string,

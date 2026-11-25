@@ -34,6 +34,7 @@ import {
   readStoredAiCooldown,
   saveStoredAiCooldown,
 } from '../../lib/aiClient';
+import { safeApiFetch } from '../../lib/safeFetch';
 
 interface CompetitiveExamHubProps {
   exams: ExamCategory[];
@@ -346,7 +347,7 @@ export const CompetitiveExamHub: React.FC<CompetitiveExamHubProps> = ({
         .map((q) => q.normalizedText)
         .slice(0, 35);
 
-      const res = await fetch('/api/exams/ai-generate-questions', {
+      const res = await safeApiFetch<any>('/api/exams/ai-generate-questions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -368,19 +369,19 @@ export const CompetitiveExamHub: React.FC<CompetitiveExamHubProps> = ({
           includeKeys: false,
         }),
       });
-      const data = await res.json();
+      const data = res.data || {};
       if (!res.ok) {
         if (data.cooldownUntil || data.cooldownRemainingSeconds > 0) {
           setAiCooldown(
             saveStoredAiCooldown({
               cooldownUntil: data.cooldownUntil,
               cooldownRemainingSeconds: data.cooldownRemainingSeconds,
-              reason: data.error,
+              reason: res.error || data.error,
               category: data.errorCategory,
             })
           );
         }
-        throw new Error(data.error || 'AI generation failed.');
+        throw new Error(res.error || data.error || 'AI generation failed.');
       }
 
       const rawQs: any[] = data.questions || [];

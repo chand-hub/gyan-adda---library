@@ -617,7 +617,11 @@ async function startServer() {
   app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     if (err instanceof SyntaxError && 'body' in err) {
       console.warn(`[API JSON Parse Error] ${req.method} ${req.originalUrl}: malformed JSON body`);
-      return res.status(400).json({ error: 'Malformed JSON request body.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Malformed JSON request body.',
+        error: 'Malformed JSON request body.',
+      });
     }
     return next(err);
   });
@@ -659,7 +663,83 @@ ${urls
     res.type('application/xml').send(xml);
   });
 
+  const allowedCorsOrigins = new Set<string>(
+    [
+      'https://gyan-library.educationrevolution90.workers.dev',
+      ...(process.env.ALLOWED_ORIGINS || '').split(','),
+      process.env.APP_URL || '',
+    ]
+      .map((o) => o.trim().replace(/\/+$/, ''))
+      .filter(Boolean)
+  );
+
+  app.use('/api', (req, res, next) => {
+    const origin = String(req.headers.origin || '').trim().replace(/\/+$/, '');
+    const requestHost = String(req.headers.host || '').trim();
+    const sameHostOrigin =
+      origin &&
+      requestHost &&
+      (origin === `https://${requestHost}` || origin === `http://${requestHost}`);
+
+    if (origin && (allowedCorsOrigins.has(origin) || sameHostOrigin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type, Authorization, X-Idempotency-Key'
+      );
+      res.setHeader('Access-Control-Max-Age', '86400');
+    }
+
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+    return next();
+  });
+
   app.use('/api', rateLimit);
+
+  // Enforce consistent { success, message, data } JSON contract across all /api/* routes
+  app.use('/api', (_req, res, next) => {
+    const origJson = res.json.bind(res);
+    res.json = ((body: any) => {
+      if (body && typeof body === 'object' && !Array.isArray(body)) {
+        if (typeof body.success === 'boolean') {
+          return origJson(body);
+        }
+        const isErrStatus = res.statusCode >= 400;
+        const msg =
+          typeof body.message === 'string' && body.message
+            ? body.message
+            : typeof body.error === 'string' && body.error
+              ? body.error
+              : isErrStatus
+                ? `Request failed (${res.statusCode})`
+                : 'OK';
+        if (isErrStatus) {
+          return origJson({
+            success: false,
+            message: msg,
+            error: typeof body.error === 'string' ? body.error : msg,
+            ...body,
+          });
+        }
+        return origJson({
+          success: true,
+          message: msg,
+          data: body,
+          ...body,
+        });
+      }
+      return origJson({
+        success: res.statusCode < 400,
+        message: res.statusCode < 400 ? 'OK' : 'Request failed',
+        data: body,
+      });
+    }) as any;
+    next();
+  });
 
   app.get('/api/health', (_req, res) => {
     const cooldown = geminiCoordinator.getCooldownInfo();
@@ -692,9 +772,61 @@ ${urls
   // =========================================================================
   // ADMIN MOBILE+PASSWORD AUTHENTICATION, PROFILE & REAL SMS OTP RECOVERY
   // =========================================================================
-  app.get('/api/admin/auth/status', (_req, res) => {
+  app.get('/api/admin/auth/status', async (req, res) => {
     try {
-      return res.json(adminSystemEngine.getAuthStatus());
+      const baseStatus = adminSystemEngine.getAuthStatus();
+      const authHeader = String(req.headers.authorization || '');
+      let authenticated = false;
+      let role: string | null = null;
+      let isDemo = false;
+      let sessionAdmin: { adminId: string; displayName: string; mobile: string } | null = null;
+
+      if (authHeader.startsWith('Bearer ')) {
+        const token = authHeader.slice('Bearer '.length).trim();
+        if (token.startsWith('demo_adm_v1.')) {
+          const demo = adminSystemEngine.verifyDemoAdminToken(token);
+          if (demo) {
+            authenticated = true;
+            role = 'demo_admin';
+            isDemo = true;
+            sessionAdmin = {
+              adminId: demo.sub,
+              displayName: demo.displayName,
+              mobile: demo.mobile,
+            };
+          }
+        } else if (token.startsWith('adm_v1.')) {
+          const adm = adminSystemEngine.verifyAdminToken(token);
+          if (adm) {
+            authenticated = true;
+            role = 'admin';
+            sessionAdmin = {
+              adminId: adm.sub,
+              displayName: adm.displayName,
+              mobile: adm.mobile,
+            };
+          }
+        } else if (token) {
+          try {
+            const decoded = await adminAuth.verifyIdToken(token);
+            authenticated = true;
+            const ownerAdmin =
+              decoded.email === 'educationrevolution90@gmail.com' &&
+              decoded.email_verified === true;
+            role = ownerAdmin ? 'admin' : 'authenticated';
+          } catch {
+            // Invalid or expired Firebase token -> unauthenticated status cleanly
+          }
+        }
+      }
+
+      return res.json({
+        ...baseStatus,
+        authenticated,
+        role,
+        isDemo,
+        admin: sessionAdmin,
+      });
     } catch (err: any) {
       console.error('[AdminAuth] status check failed:', err?.message);
       return res.status(500).json({ error: 'Unable to check administrator status.' });
@@ -728,9 +860,13 @@ ${urls
   app.post('/api/admin/auth/login', (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const masked = maskMobileForLog(body.mobile);
-    if (typeof body.mobile !== 'string' || !body.mobile.trim() || typeof body.password !== 'string' || !body.password) {
-      console.warn(`[AdminAuth] login 400 missing fields (${masked})`);
-      return res.status(400).json({ error: 'Registered mobile number and password are required.' });
+    if (typeof body.mobile !== 'string' || !body.mobile.trim()) {
+      console.warn(`[AdminAuth] login 400 missing mobile (${masked})`);
+      return res.status(400).json({ error: 'Please enter a valid 10-digit registered mobile number.' });
+    }
+    if (typeof body.password !== 'string' || !body.password.trim()) {
+      console.warn(`[AdminAuth] login 400 missing password (${masked})`);
+      return res.status(400).json({ error: 'Administrator password is required.' });
     }
     try {
       const result = adminSystemEngine.loginWithMobilePassword({

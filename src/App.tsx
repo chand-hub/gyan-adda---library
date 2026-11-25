@@ -13,7 +13,7 @@ import { StudentPortal } from './components/StudentPortal';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AdminLoginPage } from './components/AdminLoginPage';
 import { AuthModal } from './components/AuthModal';
-import { readJsonSafe } from './lib/safeFetch';
+import { safeApiFetch } from './lib/safeFetch';
 import {
   AnnouncementRecord,
   BookRecord,
@@ -191,8 +191,7 @@ const MainRouter: React.FC = () => {
   // Fetch sanitized public GYAN ADDA LIBRARY info from server API
   const refreshPublicLibraryInfo = useCallback(async () => {
     try {
-      const res = await fetch('/api/public/library-info');
-      const parsed = await readJsonSafe<any>(res);
+      const parsed = await safeApiFetch<any>('/api/public/library-info');
       if (!parsed.ok || !parsed.data) return;
       const data = parsed.data;
       if (data.settings) {

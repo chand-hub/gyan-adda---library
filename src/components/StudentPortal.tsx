@@ -45,6 +45,7 @@ import {
   reportFirestoreError,
 } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+import { safeApiFetch } from '../lib/safeFetch';
 import {
   AnnouncementRecord,
   AttendanceRecord,
@@ -667,7 +668,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
         updatedAt: serverTimestamp(),
       });
 
-      const orderRes = await fetch('/api/payments/create-order', {
+      const orderRes = await safeApiFetch<any>('/api/payments/create-order', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -681,11 +682,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
           receiptNumber,
         }),
       });
-      if (!orderRes.ok) {
-        const errBody = await orderRes.json().catch(() => ({}));
-        throw new Error(errBody.error || 'Failed to create Razorpay order.');
+      if (!orderRes.ok || !orderRes.data) {
+        throw new Error(orderRes.error || 'Failed to create Razorpay order.');
       }
-      const orderData = await orderRes.json();
+      const orderData = orderRes.data;
 
       let rzOrderId = orderData.orderId;
       let rzPaymentId = '';
@@ -730,7 +730,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
         rzPaymentId = rzResult.razorpay_payment_id;
         rzSignature = rzResult.razorpay_signature;
       } else {
-        const signRes = await fetch('/api/payments/sandbox-sign', {
+        const signRes = await safeApiFetch<any>('/api/payments/sandbox-sign', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -738,13 +738,15 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
           },
           body: JSON.stringify({ orderId: rzOrderId }),
         });
-        if (!signRes.ok) throw new Error('Sandbox signature generation failed.');
-        const signData = await signRes.json();
+        if (!signRes.ok || !signRes.data) {
+          throw new Error(signRes.error || 'Sandbox signature generation failed.');
+        }
+        const signData = signRes.data;
         rzPaymentId = signData.razorpayPaymentId;
         rzSignature = signData.razorpaySignature;
       }
 
-      const verifyRes = await fetch('/api/payments/verify', {
+      const verifyRes = await safeApiFetch<any>('/api/payments/verify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -756,9 +758,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
           razorpaySignature: rzSignature,
         }),
       });
-      const verifyData = await verifyRes.json();
-      if (!verifyRes.ok || !verifyData.verified) {
-        throw new Error(verifyData.error || 'Payment signature verification failed.');
+      const verifyData = verifyRes.data;
+      if (!verifyRes.ok || !verifyData?.verified) {
+        throw new Error(verifyRes.error || verifyData?.error || 'Payment signature verification failed.');
       }
 
       await updateDoc(doc(db, 'payments', paymentRef.id), {

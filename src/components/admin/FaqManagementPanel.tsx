@@ -3,6 +3,7 @@ import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { Edit2, HelpCircle, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react';
 import { db } from '../../lib/firebase';
 import { FaqItem } from '../../types/library';
+import { safeApiFetch } from '../../lib/safeFetch';
 
 interface FaqManagementPanelProps {
   hasFirebaseSession: boolean;
@@ -34,12 +35,13 @@ export const FaqManagementPanel: React.FC<FaqManagementPanelProps> = ({
     try {
       const token = await getIdToken();
       if (!token) return;
-      const res = await fetch('/api/admin/public-content', {
+      const res = await safeApiFetch<any>('/api/admin/public-content', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setItems(data.faqs || []);
+      if (res.ok && res.data) {
+        setItems(res.data.faqs || []);
+      } else if (res.error) {
+        onNotify('err', res.error);
       }
     } catch (err: any) {
       onNotify('err', err?.message || 'Unable to load FAQ items.');
@@ -86,7 +88,7 @@ export const FaqManagementPanel: React.FC<FaqManagementPanelProps> = ({
     try {
       const token = await getIdToken();
       if (!token) throw new Error('Session expired.');
-      const res = await fetch('/api/admin/faqs', {
+      const res = await safeApiFetch<any>('/api/admin/faqs', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -102,8 +104,8 @@ export const FaqManagementPanel: React.FC<FaqManagementPanelProps> = ({
           published,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to save FAQ item.');
+      const data = res.data || {};
+      if (!res.ok) throw new Error(res.error || 'Failed to save FAQ item.');
 
       if (hasFirebaseSession && data.faq?.id) {
         setDoc(doc(db, 'faqs', data.faq.id), {
@@ -126,7 +128,7 @@ export const FaqManagementPanel: React.FC<FaqManagementPanelProps> = ({
     try {
       const token = await getIdToken();
       if (!token) return;
-      const res = await fetch('/api/admin/faqs', {
+      const res = await safeApiFetch<any>('/api/admin/faqs', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -137,8 +139,8 @@ export const FaqManagementPanel: React.FC<FaqManagementPanelProps> = ({
           published: !item.published,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed updating visibility.');
+      const data = res.data || {};
+      if (!res.ok) throw new Error(res.error || 'Failed updating visibility.');
       if (hasFirebaseSession && data.faq?.id) {
         setDoc(doc(db, 'faqs', data.faq.id), { ...data.faq, updatedAt: serverTimestamp() }).catch(() => {});
       }
@@ -153,11 +155,11 @@ export const FaqManagementPanel: React.FC<FaqManagementPanelProps> = ({
     try {
       const token = await getIdToken();
       if (!token) return;
-      const res = await fetch(`/api/admin/faqs/${encodeURIComponent(item.id)}`, {
+      const res = await safeApiFetch<any>(`/api/admin/faqs/${encodeURIComponent(item.id)}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error('Delete failed.');
+      if (!res.ok) throw new Error(res.error || 'Delete failed.');
       if (hasFirebaseSession) {
         deleteDoc(doc(db, 'faqs', item.id)).catch(() => {});
       }

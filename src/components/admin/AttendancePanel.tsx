@@ -29,6 +29,7 @@ import {
   StudentRecord,
 } from '../../types/library';
 import { downloadCsv } from '../../lib/receiptPdf';
+import { safeApiFetch } from '../../lib/safeFetch';
 
 interface AttendancePanelProps {
   attendance: AttendanceRecord[];
@@ -137,7 +138,7 @@ export const AttendancePanel: React.FC<AttendancePanelProps> = ({
       if (!token) return;
 
       if (propStudents.length > 0) {
-        await fetch('/api/admin/attendance/sync-students', {
+        await safeApiFetch('/api/admin/attendance/sync-students', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -160,7 +161,7 @@ export const AttendancePanel: React.FC<AttendancePanelProps> = ({
               status: s.status,
             })),
           }),
-        }).catch(() => {});
+        });
       }
 
       const params = new URLSearchParams();
@@ -168,11 +169,14 @@ export const AttendancePanel: React.FC<AttendancePanelProps> = ({
       if (shiftFilter !== 'ALL') params.set('shiftId', shiftFilter);
       if (statusFilter !== 'ALL') params.set('status', statusFilter);
 
-      const res = await fetch(`/api/admin/attendance?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = (await res.json()) as AttendanceDashboardPayload & { error?: string };
-      if (!res.ok) throw new Error(data.error || 'Failed to load attendance register.');
+      const res = await safeApiFetch<AttendanceDashboardPayload & { error?: string }>(
+        `/api/admin/attendance?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!res.ok || !res.data) throw new Error(res.error || 'Failed to load attendance register.');
+      const data = res.data;
 
       setDashboard(data);
       if (data.serverIst?.iso) {
@@ -267,7 +271,7 @@ export const AttendancePanel: React.FC<AttendancePanelProps> = ({
     try {
       const token = await getIdToken();
       if (!token) throw new Error('Admin session expired.');
-      const res = await fetch('/api/admin/attendance/mark-present', {
+      const res = await safeApiFetch<any>('/api/admin/attendance/mark-present', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -282,8 +286,8 @@ export const AttendancePanel: React.FC<AttendancePanelProps> = ({
           shiftName: student.shiftName,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not record attendance.');
+      const data = res.data;
+      if (!res.ok || !data?.record) throw new Error(res.error || 'Could not record attendance.');
 
       mirrorAttendanceToFirestore(data.record);
       onNotify(
@@ -374,27 +378,30 @@ export const AttendancePanel: React.FC<AttendancePanelProps> = ({
       if (!token) throw new Error('Session expired.');
 
       if (editingRecord) {
-        const res = await fetch(`/api/admin/attendance/${encodeURIComponent(editingRecord.id)}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            status: modalStatus,
-            customStatusLabel: modalStatus === 'OTHER' ? customStatusLabel.trim() : undefined,
-            leaveType: modalStatus === 'LEAVE' ? leaveType.trim() : undefined,
-            leaveReason: modalStatus === 'LEAVE' ? leaveReason.trim() : undefined,
-            remarks: remarks.trim(),
-            correctionReason: correctionReason.trim(),
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Correction failed.');
+        const res = await safeApiFetch<any>(
+          `/api/admin/attendance/${encodeURIComponent(editingRecord.id)}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              status: modalStatus,
+              customStatusLabel: modalStatus === 'OTHER' ? customStatusLabel.trim() : undefined,
+              leaveType: modalStatus === 'LEAVE' ? leaveType.trim() : undefined,
+              leaveReason: modalStatus === 'LEAVE' ? leaveReason.trim() : undefined,
+              remarks: remarks.trim(),
+              correctionReason: correctionReason.trim(),
+            }),
+          }
+        );
+        const data = res.data;
+        if (!res.ok || !data?.record) throw new Error(res.error || 'Correction failed.');
         mirrorAttendanceToFirestore(data.record);
         onNotify('ok', `Attendance corrected for ${statusModalStudent.fullName}.`);
       } else {
-        const res = await fetch('/api/admin/attendance/mark-status', {
+        const res = await safeApiFetch<any>('/api/admin/attendance/mark-status', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -415,8 +422,8 @@ export const AttendancePanel: React.FC<AttendancePanelProps> = ({
             shiftId: statusModalStudent.shiftId,
           }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to mark status.');
+        const data = res.data;
+        if (!res.ok || !data?.record) throw new Error(res.error || 'Failed to mark status.');
         mirrorAttendanceToFirestore(data.record);
         onNotify('ok', `Marked ${statusModalStudent.fullName} as ${modalStatus} for ${activeDate}.`);
       }
@@ -434,7 +441,7 @@ export const AttendancePanel: React.FC<AttendancePanelProps> = ({
     try {
       const token = await getIdToken();
       if (!token) return;
-      const res = await fetch('/api/admin/attendance/statuses', {
+      const res = await safeApiFetch<any>('/api/admin/attendance/statuses', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -442,8 +449,8 @@ export const AttendancePanel: React.FC<AttendancePanelProps> = ({
         },
         body: JSON.stringify({ label: newCustomLabel.trim() }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Unable to create custom status.');
+      const data = res.data;
+      if (!res.ok || !data?.status) throw new Error(res.error || 'Unable to create custom status.');
       setNewCustomLabel('');
       setShowCustomCreator(false);
       onNotify('ok', `Custom status "${data.status.label}" added.`);

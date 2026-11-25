@@ -40,6 +40,7 @@ import {
   resolveClientBrandName,
 } from '../types/library';
 import { BrandLogo } from './BrandLogo';
+import { safeApiFetch } from '../lib/safeFetch';
 import { LibraryMap } from './LibraryMap';
 
 interface PublicWebsiteProps {
@@ -404,12 +405,12 @@ export const PublicWebsite: React.FC<PublicWebsiteProps> = ({
       };
 
       let savedOk = false;
-      const apiRes = await fetch('/api/public/enquiries', {
+      const apiRes = await safeApiFetch('/api/public/enquiries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      }).catch(() => null);
-      if (apiRes && apiRes.ok) savedOk = true;
+      });
+      if (apiRes.ok) savedOk = true;
 
       try {
         await addDoc(collection(db, 'enquiries'), {
