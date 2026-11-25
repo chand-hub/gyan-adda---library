@@ -41,6 +41,7 @@ import {
   ensureExamBootstrap,
   seedExamPlatformData,
 } from '../lib/examSeed';
+import { safeApiFetch } from '../lib/safeFetch';
 
 const ADMIN_OWNER_EMAIL = 'educationrevolution90@gmail.com';
 const CACHED_CONTEXT_PREFIX = 'vl_auth_ctx_v1_';
@@ -90,11 +91,14 @@ export interface AdminSessionInfo {
   displayName: string;
   mobile: string;
   updatedAt: string;
+  isDemo?: boolean;
+  role?: 'admin' | 'demo_admin';
 }
 
 interface AuthContextValue {
   firebaseUser: User | null;
   adminSession: AdminSessionInfo | null;
+  isDemoAdmin: boolean;
   profile: UserProfile | null;
   studentRecord: StudentRecord | null;
   effectiveRole: UserRole;
@@ -115,6 +119,7 @@ interface AuthContextValue {
   completeStudentProfile: (details: Omit<RegistrationDetails, 'password'>) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   loginAdminWithMobile: (mobile: string, password: string) => Promise<void>;
+  loginDemoAdmin: (mobile: string, accessCode: string) => Promise<void>;
   setupAdminCredentials: (input: {
     mobile: string;
     password: string;
@@ -531,19 +536,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginAdminWithMobile = async (mobile: string, password: string) => {
     setAuthError(null);
-    const res = await fetch('/api/admin/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mobile, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      const msg = data?.error || 'Invalid mobile number or password.';
+    const result = await safeApiFetch<{ token: string; admin: AdminSessionInfo }>(
+      '/api/admin/auth/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile, password }),
+      }
+    );
+    if (!result.ok || !result.data?.token || !result.data?.admin) {
+      const msg = result.error || 'Invalid mobile number or password.';
       setAuthError(msg);
       throw new Error(msg);
     }
-    setAdminToken(data.token);
-    setAdminSession(data.admin);
+    setAdminToken(result.data.token);
+    setAdminSession({ ...result.data.admin, isDemo: false, role: 'admin' });
+  };
+
+  const loginDemoAdmin = async (mobile: string, accessCode: string) => {
+    setAuthError(null);
+    const result = await safeApiFetch<{
+      token: string;
+      demoMode: boolean;
+      admin: AdminSessionInfo;
+    }>('/api/admin/auth/demo-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile, accessCode }),
+    });
+    if (!result.ok || !result.data?.token || !result.data?.admin) {
+      const msg = result.error || 'Demo admin authentication failed.';
+      setAuthError(msg);
+      throw new Error(msg);
+    }
+    setPreviewRole(null);
+    setAdminToken(result.data.token);
+    setAdminSession({ ...result.data.admin, isDemo: true, role: 'demo_admin' });
   };
 
   const setupAdminCredentials = async (input: {
@@ -552,19 +580,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     displayName?: string;
   }) => {
     setAuthError(null);
-    const res = await fetch('/api/admin/auth/setup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      const msg = data?.error || 'Unable to set up admin credentials.';
+    const result = await safeApiFetch<{ token: string; admin: AdminSessionInfo }>(
+      '/api/admin/auth/setup',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      }
+    );
+    if (!result.ok || !result.data?.token || !result.data?.admin) {
+      const msg = result.error || 'Unable to set up admin credentials.';
       setAuthError(msg);
       throw new Error(msg);
     }
-    setAdminToken(data.token);
-    setAdminSession(data.admin);
+    setAdminToken(result.data.token);
+    setAdminSession({ ...result.data.admin, isDemo: false, role: 'admin' });
   };
 
   const updateAdminSessionMobile = (mobile: string, displayName?: string) => {
@@ -613,15 +643,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null;
   };
 
+  const isDemoAdmin = Boolean(adminSession?.isDemo);
   const resolvedActualRole: UserRole = adminSession ? 'admin' : actualRole;
   const effectiveRole: UserRole =
-    resolvedActualRole === 'admin' && previewRole ? previewRole : resolvedActualRole;
+    !isDemoAdmin && resolvedActualRole === 'admin' && previewRole ? previewRole : resolvedActualRole;
 
   return (
     <AuthContext.Provider
       value={{
         firebaseUser,
         adminSession,
+        isDemoAdmin,
         profile,
         studentRecord,
         effectiveRole,
@@ -642,6 +674,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         completeStudentProfile,
         sendPasswordReset,
         loginAdminWithMobile,
+        loginDemoAdmin,
         setupAdminCredentials,
         updateAdminSessionMobile,
         logoutAdminSession,

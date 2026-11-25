@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  FlaskConical,
   KeyRound,
   Lock,
   Phone,
@@ -14,30 +15,45 @@ import {
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 import { useAuth } from '../context/AuthContext';
+import { safeApiFetch } from '../lib/safeFetch';
 
 interface AdminLoginPageProps {
   onBackToPublic: () => void;
   onSuccess: () => void;
 }
 
-type AdminAuthStep = 'login' | 'setup' | 'forgot_mobile' | 'forgot_otp' | 'forgot_reset';
+type AdminAuthStep =
+  | 'login'
+  | 'demo_login'
+  | 'setup'
+  | 'forgot_mobile'
+  | 'forgot_otp'
+  | 'forgot_reset';
 
 export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
   onBackToPublic,
   onSuccess,
 }) => {
-  const { loginAdminWithMobile, setupAdminCredentials, signInWithGoogle } = useAuth();
+  const { loginAdminWithMobile, loginDemoAdmin, setupAdminCredentials, signInWithGoogle } =
+    useAuth();
 
   const [step, setStep] = useState<AdminAuthStep>('login');
   const [statusLoading, setStatusLoading] = useState(true);
   const [hasAdminConfigured, setHasAdminConfigured] = useState(true);
   const [smsGatewayConfigured, setSmsGatewayConfigured] = useState(false);
+  const [demoLoginAvailable, setDemoLoginAvailable] = useState(false);
+  const [demoCredentialsConfigured, setDemoCredentialsConfigured] = useState(false);
 
   const [mobile, setMobile] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [displayName, setDisplayName] = useState('GYAN ADDA Admin');
   const [showPassword, setShowPassword] = useState(false);
+
+  // Separate Demo Admin sandbox form state (never prefilled or hardcoded)
+  const [demoMobile, setDemoMobile] = useState('');
+  const [demoAccessCode, setDemoAccessCode] = useState('');
+  const [showDemoCode, setShowDemoCode] = useState(false);
 
   // OTP Forgot Password flow state
   const [otp, setOtp] = useState('');
@@ -52,18 +68,24 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
     let active = true;
     (async () => {
       try {
-        const res = await fetch('/api/admin/auth/status');
-        if (res.ok) {
-          const data = await res.json();
-          if (!active) return;
-          setHasAdminConfigured(Boolean(data.hasAdminConfigured));
-          setSmsGatewayConfigured(Boolean(data.smsGatewayConfigured));
-          if (!data.hasAdminConfigured) {
+        const result = await safeApiFetch<{
+          hasAdminConfigured?: boolean;
+          smsGatewayConfigured?: boolean;
+          demoLoginAvailable?: boolean;
+          demoCredentialsConfigured?: boolean;
+        }>('/api/admin/auth/status');
+        if (!active) return;
+        if (result.ok && result.data) {
+          setHasAdminConfigured(Boolean(result.data.hasAdminConfigured));
+          setSmsGatewayConfigured(Boolean(result.data.smsGatewayConfigured));
+          setDemoLoginAvailable(Boolean(result.data.demoLoginAvailable));
+          setDemoCredentialsConfigured(Boolean(result.data.demoCredentialsConfigured));
+          if (!result.data.hasAdminConfigured) {
             setStep('setup');
           }
+        } else if (result.error) {
+          setErrorMsg(result.error);
         }
-      } catch {
-        // default to login form
       } finally {
         if (active) setStatusLoading(false);
       }
@@ -115,23 +137,40 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
     }
   };
 
+  const handleDemoLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setInfoMsg(null);
+    setSubmitting(true);
+    try {
+      await loginDemoAdmin(demoMobile, demoAccessCode);
+      onSuccess();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Demo admin authentication failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setInfoMsg(null);
     setSubmitting(true);
     try {
-      const res = await fetch('/api/admin/auth/forgot-password/request-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setErrorMsg(data?.error || 'Unable to dispatch SMS OTP.');
+      const result = await safeApiFetch<{ message?: string; error?: string }>(
+        '/api/admin/auth/forgot-password/request-otp',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mobile }),
+        }
+      );
+      if (!result.ok) {
+        setErrorMsg(result.error || 'Unable to dispatch SMS OTP.');
         return;
       }
-      setInfoMsg(data.message || 'OTP sent to registered mobile.');
+      setInfoMsg(result.data?.message || 'OTP sent to registered mobile.');
       setResendCooldown(60);
       setStep('forgot_otp');
     } catch {
@@ -147,17 +186,19 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
     setInfoMsg(null);
     setSubmitting(true);
     try {
-      const res = await fetch('/api/admin/auth/forgot-password/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile, otp }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setErrorMsg(data?.error || 'Invalid OTP.');
+      const result = await safeApiFetch<{ resetToken?: string; error?: string }>(
+        '/api/admin/auth/forgot-password/verify-otp',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mobile, otp }),
+        }
+      );
+      if (!result.ok || !result.data?.resetToken) {
+        setErrorMsg(result.error || 'Invalid OTP.');
         return;
       }
-      setResetToken(data.resetToken);
+      setResetToken(result.data.resetToken);
       setPassword('');
       setConfirmPassword('');
       setStep('forgot_reset');
@@ -178,14 +219,16 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
     }
     setSubmitting(true);
     try {
-      const res = await fetch('/api/admin/auth/forgot-password/reset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile, resetToken, newPassword: password }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setErrorMsg(data?.error || 'Password reset failed.');
+      const result = await safeApiFetch<{ updated?: boolean; error?: string }>(
+        '/api/admin/auth/forgot-password/reset',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mobile, resetToken, newPassword: password }),
+        }
+      );
+      if (!result.ok) {
+        setErrorMsg(result.error || 'Password reset failed.');
         return;
       }
       setInfoMsg('Admin password updated successfully. Sign in with your new password.');
@@ -285,24 +328,28 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                 <h2 className="font-display text-xl font-bold text-primary">
                   {step === 'setup'
                     ? 'First-Run Admin Setup'
-                    : step === 'login'
-                      ? 'Sign In with Mobile Number'
-                      : step === 'forgot_mobile'
-                        ? 'Forgot Admin Password'
-                        : step === 'forgot_otp'
-                          ? 'Verify SMS OTP'
-                          : 'Set New Admin Password'}
+                    : step === 'demo_login'
+                      ? 'Demo Admin Login (Sandbox Only)'
+                      : step === 'login'
+                        ? 'Sign In with Mobile Number'
+                        : step === 'forgot_mobile'
+                          ? 'Forgot Admin Password'
+                          : step === 'forgot_otp'
+                            ? 'Verify SMS OTP'
+                            : 'Set New Admin Password'}
                 </h2>
                 <p className="text-xs text-on-surface-variant mt-1">
                   {step === 'setup'
                     ? 'No administrator mobile credential has been configured yet. Register the primary Admin mobile number and password below.'
-                    : step === 'login'
-                      ? 'Enter your registered 10-digit mobile number and administrator password.'
-                      : step === 'forgot_mobile'
-                        ? 'Enter your registered administrator mobile number to receive a 6-digit SMS OTP.'
-                        : step === 'forgot_otp'
-                          ? 'Enter the 6-digit verification code sent via SMS to your registered mobile.'
-                          : 'Choose a strong password (minimum 8 characters with letters and numbers).'}
+                    : step === 'demo_login'
+                      ? 'Restricted staging demonstration using backend demo credentials (no OTP). Uses synthetic demo records only.'
+                      : step === 'login'
+                        ? 'Enter your registered 10-digit mobile number and administrator password.'
+                        : step === 'forgot_mobile'
+                          ? 'Enter your registered administrator mobile number to receive a 6-digit SMS OTP.'
+                          : step === 'forgot_otp'
+                            ? 'Enter the 6-digit verification code sent via SMS to your registered mobile.'
+                            : 'Choose a strong password (minimum 8 characters with letters and numbers).'}
                 </p>
               </div>
 
@@ -482,6 +529,103 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                   >
                     {submitting ? 'Verifying Credentials...' : 'Sign In to Admin Dashboard'}
                   </button>
+
+                  {demoLoginAvailable && (
+                    <div className="pt-2 border-t border-outline-variant/60">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setErrorMsg(null);
+                          setInfoMsg(null);
+                          setStep('demo_login');
+                        }}
+                        className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-warning/50 bg-warning-container/40 text-on-warning-container text-xs font-bold hover:bg-warning-container/70 transition-colors cursor-pointer"
+                      >
+                        <FlaskConical className="w-4 h-4" />
+                        Demo Admin Login (Staging Sandbox · No OTP)
+                      </button>
+                    </div>
+                  )}
+                </form>
+              )}
+
+              {step === 'demo_login' && demoLoginAvailable && (
+                <form onSubmit={handleDemoLogin} className="space-y-4">
+                  <div className="p-3 rounded-lg bg-warning-container text-on-warning-container border border-warning/40 text-xs leading-relaxed">
+                    <strong>DEMO MODE · READ-ONLY SANDBOX:</strong> Verify with your staging{' '}
+                    <code className="font-mono">DEMO_ADMIN_MOBILE</code> and{' '}
+                    <code className="font-mono">DEMO_ADMIN_ACCESS_CODE</code> configured on the server. No OTP is required, and real student, fee, attendance, and payment records remain strictly inaccessible.
+                  </div>
+
+                  {!demoCredentialsConfigured && (
+                    <div className="p-3 rounded-lg bg-error-container text-on-error-container border border-error/40 text-xs">
+                      Staging server variables <code className="font-mono">DEMO_ADMIN_MOBILE</code> and{' '}
+                      <code className="font-mono">DEMO_ADMIN_ACCESS_CODE</code> are not yet configured on the backend.
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-semibold text-on-surface mb-1">
+                      Demo Mobile Number
+                    </label>
+                    <div className="relative">
+                      <Smartphone className="w-4 h-4 text-outline absolute left-3 top-3" />
+                      <input
+                        type="tel"
+                        required
+                        value={demoMobile}
+                        onChange={(e) => setDemoMobile(e.target.value)}
+                        placeholder="Enter staging demo mobile number"
+                        className={inputCls}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-on-surface mb-1">
+                      Demo Access Code (No OTP)
+                    </label>
+                    <div className="relative">
+                      <KeyRound className="w-4 h-4 text-outline absolute left-3 top-3" />
+                      <input
+                        type={showDemoCode ? 'text' : 'password'}
+                        required
+                        value={demoAccessCode}
+                        onChange={(e) => setDemoAccessCode(e.target.value)}
+                        placeholder="Enter server demo access code"
+                        className={`${inputCls} pr-10`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowDemoCode((v) => !v)}
+                        aria-label={showDemoCode ? 'Hide demo access code' : 'Show demo access code'}
+                        className="absolute right-3 top-2.5 text-outline hover:text-primary cursor-pointer"
+                      >
+                        {showDemoCode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorMsg(null);
+                        setInfoMsg(null);
+                        setStep(hasAdminConfigured ? 'login' : 'setup');
+                      }}
+                      className="flex-1 min-w-[120px] py-2.5 px-4 rounded-lg border border-outline-variant text-xs font-semibold text-on-surface hover:bg-surface-container-low cursor-pointer"
+                    >
+                      Back to Real Admin Login
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submitting || !demoCredentialsConfigured}
+                      className="flex-1 min-w-[160px] py-2.5 px-4 rounded-lg bg-warning text-on-primary text-xs font-bold hover:opacity-90 transition-opacity disabled:opacity-50 cursor-pointer"
+                    >
+                      {submitting ? 'Entering Demo Mode...' : 'Enter Demo Sandbox'}
+                    </button>
+                  </div>
                 </form>
               )}
 

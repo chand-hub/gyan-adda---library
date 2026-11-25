@@ -34,7 +34,9 @@ import {
 import {
   type AdminSessionPayload,
   AdminSystemEngine,
+  type DemoAdminSessionPayload,
 } from './server/adminSystemEngine.ts';
+import { buildSyntheticDemoDashboardPayload } from './server/demoSandboxData.ts';
 
 dotenv.config();
 
@@ -50,6 +52,13 @@ interface AuthenticatedRequest extends Request {
   authUser?: DecodedIdToken;
   rawIdToken?: string;
   adminSession?: AdminSessionPayload;
+  demoAdminSession?: DemoAdminSessionPayload;
+}
+
+function maskMobileForLog(raw: unknown): string {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (digits.length < 4) return '***';
+  return `***${digits.slice(-4)}`;
 }
 
 function isHmrEnabled(): boolean {
@@ -423,7 +432,18 @@ async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextF
   }
   const token = header.slice('Bearer '.length).trim();
 
-  // 1. Check Admin Mobile+Password HMAC session token first if prefixed with adm_v1.
+  // 1. Check Staging Demo Admin token (strictly isolated from real admin & production)
+  if (token.startsWith('demo_adm_v1.')) {
+    const demoSession = adminSystemEngine.verifyDemoAdminToken(token);
+    if (!demoSession) {
+      return res.status(401).json({ error: 'Unauthorized: Demo admin session expired or disabled.' });
+    }
+    req.demoAdminSession = demoSession;
+    req.rawIdToken = token;
+    return next();
+  }
+
+  // 2. Check Admin Mobile+Password HMAC session token if prefixed with adm_v1.
   if (token.startsWith('adm_v1.')) {
     const adminSession = adminSystemEngine.verifyAdminToken(token);
     if (!adminSession) {
@@ -439,7 +459,7 @@ async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextF
     return next();
   }
 
-  // 2. Otherwise verify Firebase ID Token
+  // 3. Otherwise verify Firebase ID Token
   try {
     const decoded = await adminAuth.verifyIdToken(token);
     req.authUser = decoded;
@@ -452,6 +472,7 @@ async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextF
 }
 
 async function isCallerAdmin(req: AuthenticatedRequest): Promise<boolean> {
+  if (req.demoAdminSession) return false;
   if (req.adminSession?.role === 'admin') return true;
   const user = req.authUser;
   if (!user) return false;
@@ -459,7 +480,7 @@ async function isCallerAdmin(req: AuthenticatedRequest): Promise<boolean> {
     return true;
   }
   const token = req.rawIdToken;
-  if (!token || token.startsWith('adm_v1.')) return false;
+  if (!token || token.startsWith('adm_v1.') || token.startsWith('demo_adm_v1.')) return false;
   try {
     const dbId = firebaseConfig.firestoreDatabaseId || '(default)';
     const adminDocUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
@@ -476,6 +497,12 @@ async function isCallerAdmin(req: AuthenticatedRequest): Promise<boolean> {
 }
 
 async function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  if (req.demoAdminSession) {
+    return res.status(403).json({
+      error:
+        'Forbidden: Demo Admin sandbox cannot access or modify real student records, fees, attendance, credentials, or private files.',
+    });
+  }
   if (!req.authUser && !req.adminSession) {
     return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
   }
@@ -486,6 +513,12 @@ async function requireAdmin(req: AuthenticatedRequest, res: Response, next: Next
 }
 
 async function requireStaffOrAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  if (req.demoAdminSession) {
+    return res.status(403).json({
+      error:
+        'Forbidden: Demo Admin sandbox is read-only over synthetic data and cannot access live student or staff endpoints.',
+    });
+  }
   if (!req.authUser && !req.adminSession) {
     return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
   }
@@ -494,7 +527,7 @@ async function requireStaffOrAdmin(req: AuthenticatedRequest, res: Response, nex
   }
   const token = req.rawIdToken;
   const uid = req.authUser?.uid;
-  if (token && uid && !token.startsWith('adm_v1.')) {
+  if (token && uid && !token.startsWith('adm_v1.') && !token.startsWith('demo_adm_v1.')) {
     try {
       const dbId = firebaseConfig.firestoreDatabaseId || '(default)';
       const roleDocUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
@@ -580,6 +613,15 @@ async function startServer() {
     })
   );
 
+  // Reject malformed JSON payloads cleanly with valid JSON (never HTML/empty)
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    if (err instanceof SyntaxError && 'body' in err) {
+      console.warn(`[API JSON Parse Error] ${req.method} ${req.originalUrl}: malformed JSON body`);
+      return res.status(400).json({ error: 'Malformed JSON request body.' });
+    }
+    return next(err);
+  });
+
   // Basic security headers (compatible with AI Studio iframe)
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -651,82 +693,171 @@ ${urls
   // ADMIN MOBILE+PASSWORD AUTHENTICATION, PROFILE & REAL SMS OTP RECOVERY
   // =========================================================================
   app.get('/api/admin/auth/status', (_req, res) => {
-    return res.json(adminSystemEngine.getAuthStatus());
+    try {
+      return res.json(adminSystemEngine.getAuthStatus());
+    } catch (err: any) {
+      console.error('[AdminAuth] status check failed:', err?.message);
+      return res.status(500).json({ error: 'Unable to check administrator status.' });
+    }
   });
 
   app.post('/api/admin/auth/setup', (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const masked = maskMobileForLog(body.mobile);
+    if (typeof body.mobile !== 'string' || typeof body.password !== 'string') {
+      console.warn(`[AdminAuth] setup 400 invalid payload types (${masked})`);
+      return res.status(400).json({ error: 'Mobile number and password are required.' });
+    }
     try {
       const result = adminSystemEngine.setupFirstAdmin({
-        mobile: req.body?.mobile,
-        password: req.body?.password,
-        displayName: req.body?.displayName,
+        mobile: body.mobile,
+        password: body.password,
+        displayName: typeof body.displayName === 'string' ? body.displayName : undefined,
         ip: req.ip,
         userAgent: String(req.headers['user-agent'] || ''),
       });
+      console.info(`[AdminAuth] setup 201 initialized (${masked})`);
       return res.status(201).json(result);
     } catch (err: any) {
-      return res.status(err?.statusCode || 400).json({ error: err?.message || 'Setup failed.' });
+      const status = Number(err?.statusCode) || 400;
+      console.warn(`[AdminAuth] setup ${status} failed (${masked}): ${err?.message}`);
+      return res.status(status).json({ error: err?.message || 'Setup failed.' });
     }
   });
 
   app.post('/api/admin/auth/login', (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const masked = maskMobileForLog(body.mobile);
+    if (typeof body.mobile !== 'string' || !body.mobile.trim() || typeof body.password !== 'string' || !body.password) {
+      console.warn(`[AdminAuth] login 400 missing fields (${masked})`);
+      return res.status(400).json({ error: 'Registered mobile number and password are required.' });
+    }
     try {
       const result = adminSystemEngine.loginWithMobilePassword({
-        mobile: req.body?.mobile,
-        password: req.body?.password,
+        mobile: body.mobile,
+        password: body.password,
         ip: req.ip,
         userAgent: String(req.headers['user-agent'] || ''),
       });
-      return res.json(result);
+      console.info(`[AdminAuth] login 200 success (${masked})`);
+      return res.status(200).json(result);
     } catch (err: any) {
-      return res.status(err?.statusCode || 401).json({ error: err?.message || 'Login failed.' });
+      const status = Number(err?.statusCode) || 401;
+      console.warn(`[AdminAuth] login ${status} failed (${masked}): ${err?.message}`);
+      return res.status(status).json({ error: err?.message || 'Invalid mobile number or password.' });
     }
+  });
+
+  // Separate Staging/Demo Admin Login (NO OTP; disabled completely in production)
+  app.post('/api/admin/auth/demo-login', (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const masked = maskMobileForLog(body.mobile);
+    if (typeof body.mobile !== 'string' || typeof body.accessCode !== 'string') {
+      console.warn(`[DemoAdminAuth] demo-login 400 invalid payload (${masked})`);
+      return res.status(400).json({ error: 'Demo mobile number and access code are required.' });
+    }
+    try {
+      const result = adminSystemEngine.loginDemoAdmin({
+        mobile: body.mobile,
+        accessCode: body.accessCode,
+      });
+      console.info(`[DemoAdminAuth] demo-login 200 sandbox session issued (${masked})`);
+      return res.status(200).json(result);
+    } catch (err: any) {
+      const status = Number(err?.statusCode) || 401;
+      console.warn(`[DemoAdminAuth] demo-login ${status} rejected (${masked}): ${err?.message}`);
+      return res.status(status).json({ error: err?.message || 'Demo admin authentication failed.' });
+    }
+  });
+
+  // Synthetic read-only Demo Dashboard endpoint (never touches real database or private files)
+  app.get('/api/admin/demo/dashboard', requireAuth, (req: AuthenticatedRequest, res) => {
+    if (!adminSystemEngine.isDemoAdminEnabled()) {
+      return res.status(403).json({ error: 'Demo sandbox is disabled in production deployments.' });
+    }
+    if (!req.demoAdminSession && !req.adminSession) {
+      return res.status(403).json({ error: 'Demo Administrator session required.' });
+    }
+    return res.status(200).json(buildSyntheticDemoDashboardPayload());
   });
 
   app.post('/api/admin/auth/logout', requireAuth, (req: AuthenticatedRequest, res) => {
-    if (req.rawIdToken?.startsWith('adm_v1.')) {
-      adminSystemEngine.revokeToken(req.rawIdToken);
+    try {
+      if (req.rawIdToken?.startsWith('adm_v1.') || req.rawIdToken?.startsWith('demo_adm_v1.')) {
+        adminSystemEngine.revokeToken(req.rawIdToken);
+      }
+      return res.status(200).json({ loggedOut: true });
+    } catch (err: any) {
+      console.error('[AdminAuth] logout error:', err?.message);
+      return res.status(500).json({ error: 'Logout encountered an error.' });
     }
-    return res.json({ loggedOut: true });
   });
 
   app.post('/api/admin/auth/forgot-password/request-otp', async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const masked = maskMobileForLog(body.mobile);
+    if (typeof body.mobile !== 'string' || !body.mobile.trim()) {
+      return res.status(400).json({ error: 'Enter a valid registered mobile number.' });
+    }
     try {
       const result = await adminSystemEngine.requestPasswordResetOtp({
-        mobile: req.body?.mobile,
+        mobile: body.mobile,
         ip: req.ip,
         userAgent: String(req.headers['user-agent'] || ''),
       });
-      return res.json(result);
+      console.info(`[AdminAuth] forgot-password/request-otp 200 (${masked})`);
+      return res.status(200).json(result);
     } catch (err: any) {
-      return res.status(err?.statusCode || 400).json({ error: err?.message || 'Unable to send OTP.' });
+      const status = Number(err?.statusCode) || 400;
+      console.warn(`[AdminAuth] forgot-password/request-otp ${status} (${masked}): ${err?.message}`);
+      return res.status(status).json({ error: err?.message || 'Unable to send OTP.' });
     }
   });
 
   app.post('/api/admin/auth/forgot-password/verify-otp', (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const masked = maskMobileForLog(body.mobile);
+    if (typeof body.mobile !== 'string' || typeof body.otp !== 'string') {
+      return res.status(400).json({ error: 'Mobile number and 6-digit OTP are required.' });
+    }
     try {
       const result = adminSystemEngine.verifyResetOtp({
-        mobile: req.body?.mobile,
-        otp: req.body?.otp,
+        mobile: body.mobile,
+        otp: body.otp,
       });
-      return res.json(result);
+      console.info(`[AdminAuth] forgot-password/verify-otp 200 (${masked})`);
+      return res.status(200).json(result);
     } catch (err: any) {
-      return res.status(err?.statusCode || 400).json({ error: err?.message || 'OTP verification failed.' });
+      const status = Number(err?.statusCode) || 400;
+      console.warn(`[AdminAuth] forgot-password/verify-otp ${status} (${masked}): ${err?.message}`);
+      return res.status(status).json({ error: err?.message || 'OTP verification failed.' });
     }
   });
 
   app.post('/api/admin/auth/forgot-password/reset', (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const masked = maskMobileForLog(body.mobile);
+    if (
+      typeof body.mobile !== 'string' ||
+      typeof body.resetToken !== 'string' ||
+      typeof body.newPassword !== 'string'
+    ) {
+      return res.status(400).json({ error: 'Mobile, reset verification token, and new password are required.' });
+    }
     try {
       const result = adminSystemEngine.resetPasswordWithOtp({
-        mobile: req.body?.mobile,
-        resetToken: req.body?.resetToken,
-        newPassword: req.body?.newPassword,
+        mobile: body.mobile,
+        resetToken: body.resetToken,
+        newPassword: body.newPassword,
         ip: req.ip,
         userAgent: String(req.headers['user-agent'] || ''),
       });
-      return res.json(result);
+      console.info(`[AdminAuth] forgot-password/reset 200 (${masked})`);
+      return res.status(200).json(result);
     } catch (err: any) {
-      return res.status(err?.statusCode || 400).json({ error: err?.message || 'Password reset failed.' });
+      const status = Number(err?.statusCode) || 400;
+      console.warn(`[AdminAuth] forgot-password/reset ${status} (${masked}): ${err?.message}`);
+      return res.status(status).json({ error: err?.message || 'Password reset failed.' });
     }
   });
 
@@ -2331,6 +2462,27 @@ Provide:
         .catch((err) => console.error('[FeeScheduler] Periodic evaluation failed:', err));
     }
   }, FEE_SCHEDULER_TICK_MS);
+
+  // Guarantee ALL /api/* routes return valid JSON on 404 or unhandled errors (never HTML/empty)
+  app.use('/api', (req, res) => {
+    return res.status(404).json({
+      error: `API endpoint not found: ${req.method} ${req.originalUrl}`,
+    });
+  });
+
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) {
+      return next(err);
+    }
+    const status = Number(err?.statusCode || err?.status) || 500;
+    console.error(`[ServerError] ${req.method} ${req.originalUrl} (${status}):`, err?.message || 'Unknown error');
+    if (req.originalUrl.startsWith('/api')) {
+      return res.status(status).json({
+        error: err?.message || 'Internal server error.',
+      });
+    }
+    return res.status(status).send('Internal server error.');
+  });
 
   // Vite Dev Middleware or Static Production Build
   const httpServer = http.createServer(app);

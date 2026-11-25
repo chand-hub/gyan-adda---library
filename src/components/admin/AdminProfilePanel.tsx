@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { AdminLoginActivity } from '../../types/library';
+import { readJsonSafe } from '../../lib/safeFetch';
 
 interface AdminProfilePanelProps {
   mode: 'profile' | 'password';
@@ -56,13 +57,16 @@ export const AdminProfilePanel: React.FC<AdminProfilePanelProps> = ({ mode, onNo
       const res = await fetch('/api/admin/profile', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const json = (await res.json()) as AdminProfileResponse;
+      const parsed = await readJsonSafe<AdminProfileResponse>(res);
+      if (parsed.ok && parsed.data) {
+        const json = parsed.data;
         setData(json);
         if (json.admin) {
           setNewMobile(json.admin.mobile);
           setDisplayName(json.admin.displayName);
         }
+      } else if (parsed.error) {
+        onNotify('err', parsed.error);
       }
     } catch (err: any) {
       onNotify('err', err?.message || 'Unable to load admin security profile.');
@@ -93,8 +97,9 @@ export const AdminProfilePanel: React.FC<AdminProfilePanelProps> = ({ mode, onNo
           displayName: displayName.trim(),
         }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to save mobile credentials.');
+      const parsed = await readJsonSafe<{ error?: string; admin?: { mobile?: string } }>(res);
+      if (!parsed.ok || !parsed.data) throw new Error(parsed.error || 'Failed to save mobile credentials.');
+      const json = parsed.data;
       setInitPassword('');
       updateAdminSessionMobile(json.admin?.mobile || newMobile.trim());
       onNotify('ok', 'Admin mobile & password credentials initialized.');
@@ -124,8 +129,8 @@ export const AdminProfilePanel: React.FC<AdminProfilePanelProps> = ({ mode, onNo
         },
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Unable to update password.');
+      const parsed = await readJsonSafe<{ error?: string }>(res);
+      if (!parsed.ok) throw new Error(parsed.error || 'Unable to update password.');
       setCurrentPassword('');
       setNewPassword('');
       setConfirmNewPassword('');
@@ -156,8 +161,9 @@ export const AdminProfilePanel: React.FC<AdminProfilePanelProps> = ({ mode, onNo
           displayName: displayName.trim(),
         }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Unable to update mobile number.');
+      const parsed = await readJsonSafe<{ error?: string; admin?: { mobile?: string } }>(res);
+      if (!parsed.ok || !parsed.data) throw new Error(parsed.error || 'Unable to update mobile number.');
+      const json = parsed.data;
       setVerifyPwdForMobile('');
       if (json.admin?.mobile) {
         updateAdminSessionMobile(json.admin.mobile);

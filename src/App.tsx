@@ -13,6 +13,7 @@ import { StudentPortal } from './components/StudentPortal';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AdminLoginPage } from './components/AdminLoginPage';
 import { AuthModal } from './components/AuthModal';
+import { readJsonSafe } from './lib/safeFetch';
 import {
   AnnouncementRecord,
   BookRecord,
@@ -80,6 +81,7 @@ const MainRouter: React.FC = () => {
   const {
     firebaseUser,
     adminSession,
+    isDemoAdmin,
     studentRecord,
     effectiveRole,
     actualRole,
@@ -176,20 +178,23 @@ const MainRouter: React.FC = () => {
     if (viewMode === 'admin_login' && !isAdminOrStaff) {
       document.title = `Admin Login — ${BRAND_NAME}`;
     } else if (viewMode === 'portal' && (isAdminOrStaff || firebaseUser)) {
-      document.title = isAdminOrStaff
-        ? `Admin Dashboard — ${BRAND_NAME}`
-        : `Student Portal — ${BRAND_NAME}`;
+      document.title = isDemoAdmin
+        ? `DEMO MODE Sandbox — ${BRAND_NAME}`
+        : isAdminOrStaff
+          ? `Admin Dashboard — ${BRAND_NAME}`
+          : `Student Portal — ${BRAND_NAME}`;
     } else {
       document.title = `${BRAND_NAME} — ${BRAND_SUBTITLE}`;
     }
-  }, [viewMode, adminSession, firebaseUser, actualRole]);
+  }, [viewMode, adminSession, isDemoAdmin, firebaseUser, actualRole]);
 
   // Fetch sanitized public GYAN ADDA LIBRARY info from server API
   const refreshPublicLibraryInfo = useCallback(async () => {
     try {
       const res = await fetch('/api/public/library-info');
-      if (!res.ok) return;
-      const data = await res.json();
+      const parsed = await readJsonSafe<any>(res);
+      if (!parsed.ok || !parsed.data) return;
+      const data = parsed.data;
       if (data.settings) {
         setSettings({
           ...data.settings,
@@ -274,9 +279,9 @@ const MainRouter: React.FC = () => {
     return () => unsubs.forEach((u) => u());
   }, []);
 
-  // 2. Authenticated-only operational & educational collections (never exposed on unauthenticated public homepage)
+  // 2. Authenticated-only operational & educational collections (never exposed on unauthenticated public homepage or Demo Admin sandbox)
   useEffect(() => {
-    if (loading || !firebaseUser) {
+    if (loading || !firebaseUser || isDemoAdmin) {
       setPlans([]);
       setSeats([]);
       setAnnouncements([]);
@@ -408,7 +413,7 @@ const MainRouter: React.FC = () => {
     );
 
     return () => unsubs.forEach((u) => u());
-  }, [loading, firebaseUser?.uid, actualRole]);
+  }, [loading, firebaseUser?.uid, actualRole, isDemoAdmin]);
 
   const openAuth = (tab: 'login' | 'register' | 'reset' | 'complete_profile') => {
     setAuthModalTab(tab);

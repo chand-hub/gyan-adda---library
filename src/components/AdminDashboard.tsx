@@ -30,6 +30,7 @@ import {
   Download,
   FileText,
   FileUp,
+  FlaskConical,
   HelpCircle,
   Home,
   Image as ImageIcon,
@@ -61,6 +62,7 @@ import {
   reportFirestoreError,
 } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+import { readJsonSafe } from '../lib/safeFetch';
 import { formatCooldownRemaining, saveStoredAiCooldown, clearStoredAiCooldown } from '../lib/aiClient';
 import { downloadCsv } from '../lib/receiptPdf';
 import { BrandLogo } from './BrandLogo';
@@ -76,6 +78,7 @@ import { ExamManagementPanel } from './admin/ExamManagementPanel';
 import { FeeReminderPanel } from './admin/FeeReminderPanel';
 import { FaqManagementPanel } from './admin/FaqManagementPanel';
 import { AdminProfilePanel } from './admin/AdminProfilePanel';
+import { DemoSandboxView, SyntheticDemoPayload } from './admin/DemoSandboxView';
 import {
   AnnouncementRecord,
   AttendanceRecord,
@@ -209,6 +212,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const {
     firebaseUser,
     adminSession,
+    isDemoAdmin,
     profile,
     effectiveRole,
     actualRole,
@@ -221,10 +225,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     retryConnection,
   } = useAuth();
 
-  const isAdmin = effectiveRole === 'admin';
-  const isManagerOrAdmin = effectiveRole === 'admin' || effectiveRole === 'manager';
+  const isAdmin = !isDemoAdmin && effectiveRole === 'admin';
+  const isManagerOrAdmin =
+    !isDemoAdmin && (effectiveRole === 'admin' || effectiveRole === 'manager');
 
   const hasStaffPerm = (perm: string) => {
+    if (isDemoAdmin) return false;
     if (isManagerOrAdmin) return true;
     return staffPermissions.length === 0 || staffPermissions.includes(perm);
   };
@@ -233,6 +239,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notifyBanner, setNotifyBanner] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null);
   const [includeDemoInOverview, setIncludeDemoInOverview] = useState(true);
+
+  // Synthetic-only state for Staging Demo Admin Sandbox
+  const [demoSandboxData, setDemoSandboxData] = useState<SyntheticDemoPayload | null>(null);
+  const [demoLoading, setDemoLoading] = useState(false);
 
   // Operational collections
   const [students, setStudents] = useState<StudentRecord[]>([]);
@@ -264,8 +274,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setNotifyBanner({ type, msg });
   }, []);
 
+  const fetchDemoSandbox = useCallback(async () => {
+    if (!isDemoAdmin) return;
+    setDemoLoading(true);
+    try {
+      const token = await getIdToken();
+      if (!token) return;
+      const res = await fetch('/api/admin/demo/dashboard', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const parsed = await readJsonSafe<SyntheticDemoPayload>(res);
+      if (!parsed.ok || !parsed.data) {
+        throw new Error(parsed.error || 'Unable to load synthetic demo sandbox.');
+      }
+      setDemoSandboxData(parsed.data);
+    } catch (err: any) {
+      handleNotify('err', err?.message || 'Unable to load synthetic demo sandbox.');
+    } finally {
+      setDemoLoading(false);
+    }
+  }, [isDemoAdmin, getIdToken, handleNotify]);
+
   useEffect(() => {
-    if (!firebaseUser || actualRole === 'student') return;
+    if (isDemoAdmin) {
+      fetchDemoSandbox();
+    }
+  }, [isDemoAdmin, fetchDemoSandbox]);
+
+  useEffect(() => {
+    if (isDemoAdmin || !firebaseUser || actualRole === 'student') return;
     const unsubs: Array<() => void> = [];
 
     const onErr = (err: unknown, path: string) => {
@@ -393,9 +430,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
 
     return () => unsubs.forEach((u) => u());
-  }, [firebaseUser?.uid, actualRole, handleNotify]);
+  }, [isDemoAdmin, firebaseUser?.uid, actualRole, handleNotify]);
 
   const fetchSystemStatus = useCallback(async () => {
+    if (isDemoAdmin) return;
     setSysLoading(true);
     try {
       const token = await getIdToken();
@@ -403,17 +441,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const res = await fetch('/api/admin/system-status', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error('Unable to load system status.');
-      const data: SystemStatusResponse = await res.json();
-      setSysStatus(data);
+      const parsed = await readJsonSafe<SystemStatusResponse>(res);
+      if (!parsed.ok || !parsed.data) throw new Error(parsed.error || 'Unable to load system status.');
+      setSysStatus(parsed.data);
     } catch (err: any) {
       handleNotify('err', err?.message || 'Failed to fetch system monitor telemetry.');
     } finally {
       setSysLoading(false);
     }
-  }, [getIdToken, handleNotify]);
+  }, [isDemoAdmin, getIdToken, handleNotify]);
 
   useEffect(() => {
+    if (isDemoAdmin) return;
     let active = true;
     (async () => {
       try {
@@ -422,8 +461,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         const res = await fetch('/api/admin/attendance', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (res.ok && active) {
-          setServerAttSummary(await res.json());
+        const parsed = await readJsonSafe<any>(res);
+        if (parsed.ok && parsed.data && active) {
+          setServerAttSummary(parsed.data);
         }
       } catch {
         // Ignore transient network errors
@@ -432,15 +472,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return () => {
       active = false;
     };
-  }, [getIdToken, tab]);
+  }, [isDemoAdmin, getIdToken, tab]);
 
   useEffect(() => {
-    if (tab === 'monitoring' && isAdmin) {
+    if (tab === 'monitoring' && isAdmin && !isDemoAdmin) {
       fetchSystemStatus();
     }
-  }, [tab, isAdmin, fetchSystemStatus]);
+  }, [tab, isAdmin, isDemoAdmin, fetchSystemStatus]);
 
   const handleVerifyGeminiQuota = async () => {
+    if (isDemoAdmin) return;
     setVerifyingQuota(true);
     try {
       const token = await getIdToken();
@@ -453,7 +494,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         },
         body: JSON.stringify({ clearCooldown: true }),
       });
-      const data = await res.json();
+      const parsed = await readJsonSafe<any>(res);
+      const data = parsed.data || {};
       if (data.available) {
         clearStoredAiCooldown();
         handleNotify('ok', `Gemini quota verified (${data.model}). Circuit breaker closed and cooldown cleared.`);
@@ -466,7 +508,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             category: data.errorCategory,
           });
         }
-        handleNotify('err', data.message || 'Gemini quota probe returned unavailable.');
+        handleNotify('err', parsed.error || data.message || 'Gemini quota probe returned unavailable.');
       }
       await fetchSystemStatus();
     } catch (err: any) {
@@ -477,6 +519,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const kpis = useMemo(() => {
+    if (isDemoAdmin) {
+      const d = demoSandboxData;
+      return {
+        totalStudents: d?.kpis.totalStudents ?? 0,
+        activeMembers: d?.students.length ?? 0,
+        expiredMemberships: 0,
+        todayAttendance: d?.kpis.presentToday ?? 0,
+        availableSeats: 45,
+        occupiedSeats: d?.students.length ?? 0,
+        verifiedRevenue: d?.kpis.monthlyDemoRevenue ?? 0,
+        pendingPayments: d?.kpis.pendingDemoFeeBalance ?? 0,
+        totalBooks: 12,
+        issuedBooks: 2,
+      };
+    }
+
     const scopeFilter = <T extends { isDemo?: boolean }>(arr: T[]) =>
       includeDemoInOverview ? arr : arr.filter((item) => !item.isDemo);
 
@@ -521,9 +579,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       totalBooks: books.length,
       issuedBooks,
     };
-  }, [students, memberships, payments, attendance, bookIssues, seats, books, includeDemoInOverview, serverAttSummary]);
+  }, [isDemoAdmin, demoSandboxData, students, memberships, payments, attendance, bookIssues, seats, books, includeDemoInOverview, serverAttSummary]);
 
   const planDistributionData = useMemo(() => {
+    if (isDemoAdmin) {
+      return [
+        { name: 'Full-Day (Demo)', value: 1 },
+        { name: 'Morning (Demo)', value: 1 },
+        { name: 'Evening (Demo)', value: 1 },
+      ];
+    }
     const counts: Record<string, number> = {};
     memberships
       .filter((m) => (includeDemoInOverview ? true : !m.isDemo))
@@ -531,18 +596,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         counts[m.planName] = (counts[m.planName] || 0) + 1;
       });
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [memberships, includeDemoInOverview]);
+  }, [isDemoAdmin, memberships, includeDemoInOverview]);
 
   const seatOccupancyData = useMemo(() => {
+    if (isDemoAdmin) {
+      return [
+        { name: 'Occupied', count: demoSandboxData?.students.length ?? 3 },
+        { name: 'Available', count: 45 },
+        { name: 'Reserved', count: 2 },
+        { name: 'Maintenance', count: 0 },
+      ];
+    }
     return [
       { name: 'Occupied', count: seats.filter((s) => s.status === 'occupied').length },
       { name: 'Available', count: seats.filter((s) => s.status === 'available').length },
       { name: 'Reserved', count: seats.filter((s) => s.status === 'reserved').length },
       { name: 'Maintenance', count: seats.filter((s) => s.status === 'maintenance').length },
     ];
-  }, [seats]);
+  }, [isDemoAdmin, demoSandboxData, seats]);
 
   const attendanceChartData = useMemo(() => {
+    if (isDemoAdmin) {
+      return [
+        { date: 'Demo-2', checkIns: 2 },
+        { date: 'Demo-1', checkIns: 3 },
+        { date: 'Today', checkIns: demoSandboxData?.kpis.presentToday ?? 2 },
+      ];
+    }
     const map: Record<string, number> = {};
     attendance
       .filter((a) => (includeDemoInOverview ? true : !a.isDemo))
@@ -553,62 +633,77 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(-7)
       .map(([date, checkIns]) => ({ date: date.slice(5), checkIns }));
-  }, [attendance, includeDemoInOverview]);
+  }, [isDemoAdmin, demoSandboxData, attendance, includeDemoInOverview]);
 
   const navGroups: Array<{
     group: string;
     items: Array<{ id: AdminTab; label: string; icon: React.ReactNode; visible: boolean; badge?: number }>;
-  }> = [
-    {
-      group: 'Core Administration',
-      items: [
-        { id: 'overview', label: 'Dashboard Overview', icon: <LayoutDashboard className="w-4 h-4" />, visible: true },
-        { id: 'students', label: 'Student Management', icon: <Users className="w-4 h-4" />, visible: hasStaffPerm('view_students') },
-        { id: 'attendance', label: 'Attendance Management', icon: <CalendarCheck className="w-4 h-4" />, visible: hasStaffPerm('mark_attendance') },
-        { id: 'shifts', label: 'Shift Management', icon: <Clock className="w-4 h-4" />, visible: hasStaffPerm('mark_attendance') },
-        { id: 'fee_reminders', label: 'Fee Management', icon: <MessageCircle className="w-4 h-4" />, visible: isManagerOrAdmin },
-        { id: 'finance', label: 'Payment History', icon: <CreditCard className="w-4 h-4" />, visible: isManagerOrAdmin || hasStaffPerm('record_offline_payments') },
-        { id: 'analytics', label: 'Reports & Analytics', icon: <BarChart3 className="w-4 h-4" />, visible: isManagerOrAdmin },
-      ],
-    },
-    {
-      group: 'Public Website CMS',
-      items: [
-        { id: 'faqs', label: 'FAQ Management', icon: <HelpCircle className="w-4 h-4" />, visible: isManagerOrAdmin },
-        { id: 'facilities', label: 'Library Facilities', icon: <Sparkles className="w-4 h-4" />, visible: isManagerOrAdmin },
-        { id: 'gallery', label: 'Photo Gallery', icon: <ImageIcon className="w-4 h-4" />, visible: isManagerOrAdmin },
-        { id: 'settings', label: 'Public Website Settings', icon: <Settings className="w-4 h-4" />, visible: isAdmin },
-        { id: 'enquiries', label: 'Enquiries', icon: <MessageSquare className="w-4 h-4" />, visible: hasStaffPerm('view_enquiries') },
-      ],
-    },
-    {
-      group: 'Library & Exam Desk',
-      items: [
-        { id: 'seats', label: 'Study Seats', icon: <LayoutGrid className="w-4 h-4" />, visible: hasStaffPerm('manage_seats') },
+  }> = isDemoAdmin
+    ? [
         {
-          id: 'books',
-          label: 'Book Management',
-          icon: <BookOpen className="w-4 h-4" />,
-          visible: hasStaffPerm('manage_books'),
-          badge: kpis.issuedBooks > 0 ? kpis.issuedBooks : undefined,
+          group: 'Demo Sandbox (Read-Only)',
+          items: [
+            { id: 'overview', label: 'Demo Overview', icon: <LayoutDashboard className="w-4 h-4" />, visible: true },
+            { id: 'students', label: 'Demo Students', icon: <Users className="w-4 h-4" />, visible: true },
+            { id: 'attendance', label: 'Demo Attendance', icon: <CalendarCheck className="w-4 h-4" />, visible: true },
+            { id: 'shifts', label: 'Demo Shifts', icon: <Clock className="w-4 h-4" />, visible: true },
+            { id: 'fee_reminders', label: 'Demo Fee Summary', icon: <MessageCircle className="w-4 h-4" />, visible: true },
+            { id: 'finance', label: 'Demo Payments', icon: <CreditCard className="w-4 h-4" />, visible: true },
+            { id: 'analytics', label: 'Demo Analytics', icon: <BarChart3 className="w-4 h-4" />, visible: true },
+          ],
         },
-        { id: 'exam_management', label: 'Exam & News CMS', icon: <Award className="w-4 h-4" />, visible: isManagerOrAdmin },
-        { id: 'pdf_import', label: 'AI PDF Importer', icon: <FileUp className="w-4 h-4" />, visible: isManagerOrAdmin },
-      ],
-    },
-    {
-      group: 'Security & Account',
-      items: [
-        { id: 'admin_profile', label: 'Admin Profile & Security', icon: <ShieldCheck className="w-4 h-4" />, visible: isAdmin },
-        { id: 'change_password', label: 'Change Password', icon: <KeyRound className="w-4 h-4" />, visible: isAdmin },
-        { id: 'staff', label: 'Staff & RBAC', icon: <Shield className="w-4 h-4" />, visible: isManagerOrAdmin },
-        { id: 'announcements', label: 'Notices', icon: <Megaphone className="w-4 h-4" />, visible: isManagerOrAdmin },
-        { id: 'notifications', label: 'Notifications', icon: <Bell className="w-4 h-4" />, visible: isManagerOrAdmin },
-        { id: 'audit', label: 'Audit Logs', icon: <FileText className="w-4 h-4" />, visible: isAdmin },
-        { id: 'monitoring', label: 'System Monitor', icon: <Activity className="w-4 h-4" />, visible: isAdmin },
-      ],
-    },
-  ];
+      ]
+    : [
+        {
+          group: 'Core Administration',
+          items: [
+            { id: 'overview', label: 'Dashboard Overview', icon: <LayoutDashboard className="w-4 h-4" />, visible: true },
+            { id: 'students', label: 'Student Management', icon: <Users className="w-4 h-4" />, visible: hasStaffPerm('view_students') },
+            { id: 'attendance', label: 'Attendance Management', icon: <CalendarCheck className="w-4 h-4" />, visible: hasStaffPerm('mark_attendance') },
+            { id: 'shifts', label: 'Shift Management', icon: <Clock className="w-4 h-4" />, visible: hasStaffPerm('mark_attendance') },
+            { id: 'fee_reminders', label: 'Fee Management', icon: <MessageCircle className="w-4 h-4" />, visible: isManagerOrAdmin },
+            { id: 'finance', label: 'Payment History', icon: <CreditCard className="w-4 h-4" />, visible: isManagerOrAdmin || hasStaffPerm('record_offline_payments') },
+            { id: 'analytics', label: 'Reports & Analytics', icon: <BarChart3 className="w-4 h-4" />, visible: isManagerOrAdmin },
+          ],
+        },
+        {
+          group: 'Public Website CMS',
+          items: [
+            { id: 'faqs', label: 'FAQ Management', icon: <HelpCircle className="w-4 h-4" />, visible: isManagerOrAdmin },
+            { id: 'facilities', label: 'Library Facilities', icon: <Sparkles className="w-4 h-4" />, visible: isManagerOrAdmin },
+            { id: 'gallery', label: 'Photo Gallery', icon: <ImageIcon className="w-4 h-4" />, visible: isManagerOrAdmin },
+            { id: 'settings', label: 'Public Website Settings', icon: <Settings className="w-4 h-4" />, visible: isAdmin },
+            { id: 'enquiries', label: 'Enquiries', icon: <MessageSquare className="w-4 h-4" />, visible: hasStaffPerm('view_enquiries') },
+          ],
+        },
+        {
+          group: 'Library & Exam Desk',
+          items: [
+            { id: 'seats', label: 'Study Seats', icon: <LayoutGrid className="w-4 h-4" />, visible: hasStaffPerm('manage_seats') },
+            {
+              id: 'books',
+              label: 'Book Management',
+              icon: <BookOpen className="w-4 h-4" />,
+              visible: hasStaffPerm('manage_books'),
+              badge: kpis.issuedBooks > 0 ? kpis.issuedBooks : undefined,
+            },
+            { id: 'exam_management', label: 'Exam & News CMS', icon: <Award className="w-4 h-4" />, visible: isManagerOrAdmin },
+            { id: 'pdf_import', label: 'AI PDF Importer', icon: <FileUp className="w-4 h-4" />, visible: isManagerOrAdmin },
+          ],
+        },
+        {
+          group: 'Security & Account',
+          items: [
+            { id: 'admin_profile', label: 'Admin Profile & Security', icon: <ShieldCheck className="w-4 h-4" />, visible: isAdmin },
+            { id: 'change_password', label: 'Change Password', icon: <KeyRound className="w-4 h-4" />, visible: isAdmin },
+            { id: 'staff', label: 'Staff & RBAC', icon: <Shield className="w-4 h-4" />, visible: isManagerOrAdmin },
+            { id: 'announcements', label: 'Notices', icon: <Megaphone className="w-4 h-4" />, visible: isManagerOrAdmin },
+            { id: 'notifications', label: 'Notifications', icon: <Bell className="w-4 h-4" />, visible: isManagerOrAdmin },
+            { id: 'audit', label: 'Audit Logs', icon: <FileText className="w-4 h-4" />, visible: isAdmin },
+            { id: 'monitoring', label: 'System Monitor', icon: <Activity className="w-4 h-4" />, visible: isAdmin },
+          ],
+        },
+      ];
 
   const actorDisplayName =
     adminSession?.displayName || profile?.displayName || firebaseUser?.email || 'Administrator';
@@ -714,7 +809,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {actorDisplayName}
               </span>
               <span className="font-body text-xs text-on-primary-container capitalize truncate">
-                Role: {effectiveRole}
+                {isDemoAdmin ? 'DEMO MODE · Read-Only' : `Role: ${effectiveRole}`}
               </span>
             </div>
           </div>
@@ -735,49 +830,64 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <Menu className="w-5 h-5" />
             </button>
             <div className="min-w-0">
-              <p className="font-headline text-sm sm:text-base font-bold text-primary truncate">
-                {resolveClientBrandName(settings?.libraryName) || BRAND_NAME}
-              </p>
+              <div className="flex items-center gap-2">
+                <p className="font-headline text-sm sm:text-base font-bold text-primary truncate">
+                  {resolveClientBrandName(settings?.libraryName) || BRAND_NAME}
+                </p>
+                {isDemoAdmin && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-warning-container text-on-warning-container border border-warning/40 text-[10px] font-extrabold uppercase tracking-wider shrink-0">
+                    <FlaskConical className="w-3 h-3" /> DEMO MODE
+                  </span>
+                )}
+              </div>
               <p className="font-body text-xs text-on-surface-variant capitalize truncate">
-                {BRAND_SUBTITLE} · {effectiveRole} Management Console
+                {isDemoAdmin
+                  ? `${BRAND_SUBTITLE} · Synthetic Read-Only Sandbox`
+                  : `${BRAND_SUBTITLE} · ${effectiveRole} Management Console`}
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2.5 shrink-0 max-w-full">
-            <button
-              type="button"
-              onClick={() => retryConnection().catch(() => {})}
-              title={
-                connectionStatus.lastError
-                  ? `Firestore: ${connectionStatus.state} (${connectionStatus.lastError})`
-                  : `Firestore: ${connectionStatus.state}`
-              }
-              className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-semibold transition-colors cursor-pointer ${
-                connectionStatus.state === 'connected'
-                  ? 'border-success/30 bg-success-container/60 text-on-success-container'
-                  : connectionStatus.state === 'offline'
-                    ? 'border-error/40 bg-error-container text-on-error-container'
-                    : 'border-warning/40 bg-warning-container text-on-warning-container'
-              }`}
-            >
-              {connectionStatus.state === 'connected' ? (
-                <Wifi className="w-3.5 h-3.5" />
-              ) : connectionStatus.state === 'offline' ? (
-                <WifiOff className="w-3.5 h-3.5" />
-              ) : (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              )}
-              <span>
-                {connectionStatus.state === 'connected'
-                  ? 'Firestore Live'
-                  : connectionStatus.state === 'offline'
-                    ? 'Offline · Retry'
-                    : 'Reconnecting'}
+            {isDemoAdmin ? (
+              <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-warning/40 bg-warning-container/60 text-on-warning-container text-xs font-bold">
+                <FlaskConical className="w-3.5 h-3.5" /> Synthetic Data Only
               </span>
-            </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => retryConnection().catch(() => {})}
+                title={
+                  connectionStatus.lastError
+                    ? `Firestore: ${connectionStatus.state} (${connectionStatus.lastError})`
+                    : `Firestore: ${connectionStatus.state}`
+                }
+                className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-semibold transition-colors cursor-pointer ${
+                  connectionStatus.state === 'connected'
+                    ? 'border-success/30 bg-success-container/60 text-on-success-container'
+                    : connectionStatus.state === 'offline'
+                      ? 'border-error/40 bg-error-container text-on-error-container'
+                      : 'border-warning/40 bg-warning-container text-on-warning-container'
+                }`}
+              >
+                {connectionStatus.state === 'connected' ? (
+                  <Wifi className="w-3.5 h-3.5" />
+                ) : connectionStatus.state === 'offline' ? (
+                  <WifiOff className="w-3.5 h-3.5" />
+                ) : (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                )}
+                <span>
+                  {connectionStatus.state === 'connected'
+                    ? 'Firestore Live'
+                    : connectionStatus.state === 'offline'
+                      ? 'Offline · Retry'
+                      : 'Reconnecting'}
+                </span>
+              </button>
+            )}
 
-            {actualRole === 'admin' && (
+            {actualRole === 'admin' && !isDemoAdmin && (
               <select
                 aria-label="Preview Role Switcher"
                 value={previewRole || 'admin'}
@@ -826,6 +936,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         {/* Main Workspace */}
         <main className="flex-1 min-w-0 p-3 sm:p-4 lg:p-8 max-w-7xl w-full mx-auto space-y-6">
+          {isDemoAdmin && (
+            <div
+              role="status"
+              className="p-3.5 rounded-lg border-2 border-warning/50 bg-warning-container text-on-warning-container text-xs flex flex-wrap items-center justify-between gap-3 shadow-sm"
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <FlaskConical className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="font-bold uppercase tracking-wider">
+                    DEMO MODE ACTIVE — Restricted Read-Only Sandbox
+                  </p>
+                  <p className="opacity-90 mt-0.5">
+                    Showing synthetic sample data only. Real student records, fees, attendance, payments, private files, and administrator settings are strictly isolated and blocked.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={signOut}
+                className="px-3 py-1.5 rounded bg-primary text-on-primary text-xs font-semibold hover:bg-primary-container cursor-pointer shrink-0"
+              >
+                Exit Demo Mode
+              </button>
+            </div>
+          )}
+
           {notifyBanner && (
             <div
               className={`p-3.5 rounded-lg border text-xs font-medium flex flex-wrap items-center justify-between gap-2 ${
@@ -850,49 +986,53 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h1 className="font-headline text-2xl font-bold text-on-surface">
-                    Library overview
+                    {isDemoAdmin ? 'Library overview (Demo Sandbox)' : 'Library overview'}
                   </h1>
                   <p className="text-sm text-on-surface-variant">
-                    Real-time metrics across seats, memberships, attendance, competitive exams, books, and verified revenue.
+                    {isDemoAdmin
+                      ? 'Synthetic demonstration metrics for staging evaluation. Zero production records are loaded.'
+                      : 'Real-time metrics across seats, memberships, attendance, competitive exams, books, and verified revenue.'}
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded border border-outline-variant bg-surface-container-lowest text-xs font-medium cursor-pointer text-on-surface">
-                    <input
-                      type="checkbox"
-                      checked={includeDemoInOverview}
-                      onChange={(e) => setIncludeDemoInOverview(e.target.checked)}
-                    />
-                    Include Demo Sample Records
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      downloadCsv(
-                        `gyan-adda-executive-summary-${new Date().toISOString().slice(0, 10)}.csv`,
-                        ['Metric', 'Value'],
-                        [
-                          ['Total Students', kpis.totalStudents],
-                          ['Active Members', kpis.activeMembers],
-                          ['Expired Memberships', kpis.expiredMemberships],
-                          ['Today Attendance', kpis.todayAttendance],
-                          ['Available Seats', kpis.availableSeats],
-                          ['Occupied Seats', kpis.occupiedSeats],
-                          ['Verified Revenue (INR)', kpis.verifiedRevenue],
-                          ['Pending Payments (INR)', kpis.pendingPayments],
-                          ['Total Books', kpis.totalBooks],
-                          ['Issued Books', kpis.issuedBooks],
-                          ['Exam Questions', questions.length],
-                          ['Exam Attempts', attempts.length],
-                        ]
-                      )
-                    }
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded bg-surface-container-lowest border border-outline-variant text-primary text-xs font-semibold hover:bg-surface-container-low cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" /> Export Report
-                  </button>
-                </div>
+                {!isDemoAdmin && (
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <label className="inline-flex items-center gap-2 px-3 py-2 rounded border border-outline-variant bg-surface-container-lowest text-xs font-medium cursor-pointer text-on-surface">
+                      <input
+                        type="checkbox"
+                        checked={includeDemoInOverview}
+                        onChange={(e) => setIncludeDemoInOverview(e.target.checked)}
+                      />
+                      Include Demo Sample Records
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadCsv(
+                          `gyan-adda-executive-summary-${new Date().toISOString().slice(0, 10)}.csv`,
+                          ['Metric', 'Value'],
+                          [
+                            ['Total Students', kpis.totalStudents],
+                            ['Active Members', kpis.activeMembers],
+                            ['Expired Memberships', kpis.expiredMemberships],
+                            ['Today Attendance', kpis.todayAttendance],
+                            ['Available Seats', kpis.availableSeats],
+                            ['Occupied Seats', kpis.occupiedSeats],
+                            ['Verified Revenue (INR)', kpis.verifiedRevenue],
+                            ['Pending Payments (INR)', kpis.pendingPayments],
+                            ['Total Books', kpis.totalBooks],
+                            ['Issued Books', kpis.issuedBooks],
+                            ['Exam Questions', questions.length],
+                            ['Exam Attempts', attempts.length],
+                          ]
+                        )
+                      }
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded bg-surface-container-lowest border border-outline-variant text-primary text-xs font-semibold hover:bg-surface-container-low cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Export Report
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* KPI Cards */}
@@ -1030,7 +1170,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           )}
 
-          {tab === 'analytics' && isManagerOrAdmin && (
+          {isDemoAdmin &&
+            (tab === 'students' ||
+              tab === 'attendance' ||
+              tab === 'shifts' ||
+              tab === 'fee_reminders' ||
+              tab === 'finance' ||
+              tab === 'analytics') && (
+              <DemoSandboxView
+                tab={tab}
+                data={demoSandboxData}
+                loading={demoLoading}
+                onRefresh={fetchDemoSandbox}
+              />
+            )}
+
+          {!isDemoAdmin && tab === 'analytics' && isManagerOrAdmin && (
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
@@ -1109,7 +1264,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           )}
 
-          {tab === 'fee_reminders' && isManagerOrAdmin && (
+          {!isDemoAdmin && tab === 'fee_reminders' && isManagerOrAdmin && (
             <FeeReminderPanel
               students={students}
               plans={plans}
@@ -1120,7 +1275,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {tab === 'monitoring' && isAdmin && (
+          {!isDemoAdmin && tab === 'monitoring' && isAdmin && (
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
@@ -1340,7 +1495,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           )}
 
-          {tab === 'exam_management' && isManagerOrAdmin && (
+          {!isDemoAdmin && tab === 'exam_management' && isManagerOrAdmin && (
             <ExamManagementPanel
               exams={exams}
               questions={questions}
@@ -1354,7 +1509,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {tab === 'pdf_import' && isManagerOrAdmin && (
+          {!isDemoAdmin && tab === 'pdf_import' && isManagerOrAdmin && (
             <AIPdfImportPanel
               exams={exams}
               existingQuestions={questions}
@@ -1364,7 +1519,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {tab === 'students' && (
+          {!isDemoAdmin && tab === 'students' && (
             <StudentsPanel
               students={students}
               plans={plans}
@@ -1379,7 +1534,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {tab === 'seats' && (
+          {!isDemoAdmin && tab === 'seats' && (
             <SeatManagementPanel
               seats={seats}
               bookings={bookings}
@@ -1390,7 +1545,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {tab === 'attendance' && (
+          {!isDemoAdmin && tab === 'attendance' && (
             <AttendancePanel
               attendance={attendance}
               students={students}
@@ -1401,7 +1556,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {tab === 'shifts' && (
+          {!isDemoAdmin && tab === 'shifts' && (
             <ShiftManagementPanel
               students={students}
               hasFirebaseSession={Boolean(firebaseUser)}
@@ -1411,7 +1566,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {tab === 'faqs' && isManagerOrAdmin && (
+          {!isDemoAdmin && tab === 'faqs' && isManagerOrAdmin && (
             <FaqManagementPanel
               hasFirebaseSession={Boolean(firebaseUser)}
               getIdToken={getIdToken}
@@ -1419,15 +1574,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {tab === 'admin_profile' && isAdmin && (
+          {!isDemoAdmin && tab === 'admin_profile' && isAdmin && (
             <AdminProfilePanel mode="profile" onNotify={handleNotify} />
           )}
 
-          {tab === 'change_password' && isAdmin && (
+          {!isDemoAdmin && tab === 'change_password' && isAdmin && (
             <AdminProfilePanel mode="password" onNotify={handleNotify} />
           )}
 
-          {tab === 'books' && (
+          {!isDemoAdmin && tab === 'books' && (
             <BooksAndIssuesPanel
               books={books}
               issues={bookIssues}
@@ -1437,7 +1592,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {tab === 'finance' && (
+          {!isDemoAdmin && tab === 'finance' && (
             <FinancePanel
               plans={plans}
               memberships={memberships}
@@ -1453,32 +1608,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {(tab === 'staff' ||
-            tab === 'enquiries' ||
-            tab === 'gallery' ||
-            tab === 'facilities' ||
-            tab === 'announcements' ||
-            tab === 'notifications' ||
-            tab === 'audit' ||
-            tab === 'settings') && (
-            <SettingsAndOpsPanel
-              activeSection={tab}
-              staffList={staffList}
-              enquiries={enquiries}
-              gallery={gallery}
-              announcements={announcements}
-              auditLogs={auditLogs}
-              students={students}
-              settings={settings}
-              actorUid={firebaseUser?.uid || adminSession?.adminId || ''}
-              actorRole={effectiveRole}
-              isAdmin={isAdmin}
-              isManagerOrAdmin={isManagerOrAdmin}
-              hasFirebaseSession={Boolean(firebaseUser)}
-              getIdToken={getIdToken}
-              onNotify={handleNotify}
-            />
-          )}
+          {!isDemoAdmin &&
+            (tab === 'staff' ||
+              tab === 'enquiries' ||
+              tab === 'gallery' ||
+              tab === 'facilities' ||
+              tab === 'announcements' ||
+              tab === 'notifications' ||
+              tab === 'audit' ||
+              tab === 'settings') && (
+              <SettingsAndOpsPanel
+                activeSection={tab}
+                staffList={staffList}
+                enquiries={enquiries}
+                gallery={gallery}
+                announcements={announcements}
+                auditLogs={auditLogs}
+                students={students}
+                settings={settings}
+                actorUid={firebaseUser?.uid || adminSession?.adminId || ''}
+                actorRole={effectiveRole}
+                isAdmin={isAdmin}
+                isManagerOrAdmin={isManagerOrAdmin}
+                hasFirebaseSession={Boolean(firebaseUser)}
+                getIdToken={getIdToken}
+                onNotify={handleNotify}
+              />
+            )}
         </main>
       </div>
     </div>

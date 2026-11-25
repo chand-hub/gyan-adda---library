@@ -46,6 +46,17 @@ export interface AdminSessionPayload {
   exp: number;
 }
 
+export interface DemoAdminSessionPayload {
+  sub: string;
+  role: 'demo_admin';
+  isDemo: true;
+  mobile: string;
+  displayName: string;
+  jti: string;
+  iat: number;
+  exp: number;
+}
+
 export interface AdminSystemStore {
   admin: AdminCredentialState | null;
   revokedJtis: Record<string, number>;
@@ -473,6 +484,7 @@ export class AdminSystemEngine {
   private readonly hmacSecret: string;
   private store: AdminSystemStore;
   private activeOtps = new Map<string, AdminOtpState>();
+  private revokedDemoJtis = new Map<string, number>();
 
   constructor(options: { hmacSecret: string; storePath?: string }) {
     this.hmacSecret = options.hmacSecret;
@@ -645,6 +657,10 @@ export class AdminSystemEngine {
   }
 
   public revokeToken(token: string) {
+    if (String(token || '').startsWith('demo_adm_v1.')) {
+      this.revokeDemoToken(token);
+      return;
+    }
     const payload = this.verifyAdminToken(token);
     if (payload) {
       this.store.revokedJtis[payload.jti] = payload.exp;
@@ -656,20 +672,166 @@ export class AdminSystemEngine {
     }
   }
 
+  public isDemoAdminEnabled(): boolean {
+    if (String(process.env.ENABLE_DEMO_ADMIN || '').trim().toLowerCase() !== 'true') {
+      return false;
+    }
+    const depEnv = String(process.env.DEPLOYMENT_ENV || process.env.APP_ENV || '').trim().toLowerCase();
+    if (depEnv === 'production' || depEnv === 'prod') {
+      return false;
+    }
+    return depEnv === 'staging' || depEnv === 'demo';
+  }
+
+  public areDemoCredentialsConfigured(): boolean {
+    const demoMobile = normalizeMobileNumber(process.env.DEMO_ADMIN_MOBILE);
+    const demoCode = String(process.env.DEMO_ADMIN_ACCESS_CODE || '').trim();
+    return Boolean(demoMobile && isValidIndianOrIntlMobile(demoMobile) && demoCode.length >= 4);
+  }
+
+  private signDemoAdminToken(mobile: string): { token: string; expiresAt: string } {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expSec = nowSec + 4 * 60 * 60; // 4h sandbox session
+    const payload: DemoAdminSessionPayload = {
+      sub: 'demo_admin_sandbox',
+      role: 'demo_admin',
+      isDemo: true,
+      mobile,
+      displayName: 'Demo Administrator (Sandbox)',
+      jti: crypto.randomBytes(12).toString('hex'),
+      iat: nowSec,
+      exp: expSec,
+    };
+    const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    const sig = crypto
+      .createHmac('sha256', this.hmacSecret)
+      .update(`demo_adm_v1.${encoded}`)
+      .digest('hex');
+    return {
+      token: `demo_adm_v1.${encoded}.${sig}`,
+      expiresAt: new Date(expSec * 1000).toISOString(),
+    };
+  }
+
+  public verifyDemoAdminToken(token: string): DemoAdminSessionPayload | null {
+    if (!this.isDemoAdminEnabled()) return null;
+    try {
+      const parts = String(token || '').split('.');
+      if (parts.length !== 3 || parts[0] !== 'demo_adm_v1') return null;
+      const [, encoded, sig] = parts;
+      const expectedSig = crypto
+        .createHmac('sha256', this.hmacSecret)
+        .update(`demo_adm_v1.${encoded}`)
+        .digest('hex');
+      const sigBuf = Buffer.from(sig, 'utf8');
+      const expBuf = Buffer.from(expectedSig, 'utf8');
+      if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+        return null;
+      }
+      const parsed = JSON.parse(
+        Buffer.from(encoded, 'base64url').toString('utf8')
+      ) as DemoAdminSessionPayload;
+      if (!parsed.jti || !parsed.exp || parsed.role !== 'demo_admin' || parsed.isDemo !== true) {
+        return null;
+      }
+      if (parsed.exp <= Math.floor(Date.now() / 1000)) return null;
+      if (this.revokedDemoJtis.has(parsed.jti)) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  public revokeDemoToken(token: string) {
+    const payload = this.verifyDemoAdminToken(token);
+    if (payload) {
+      this.revokedDemoJtis.set(payload.jti, payload.exp);
+      const nowSec = Math.floor(Date.now() / 1000);
+      for (const [k, exp] of this.revokedDemoJtis.entries()) {
+        if (exp <= nowSec) this.revokedDemoJtis.delete(k);
+      }
+    }
+  }
+
+  public loginDemoAdmin(input: { mobile: string; accessCode: string }) {
+    if (!this.isDemoAdminEnabled()) {
+      throw Object.assign(
+        new Error('Demo Admin Login is only enabled in isolated staging/demo deployments.'),
+        { statusCode: 403 }
+      );
+    }
+    if (!this.areDemoCredentialsConfigured()) {
+      throw Object.assign(
+        new Error(
+          'Demo Admin credentials (DEMO_ADMIN_MOBILE and DEMO_ADMIN_ACCESS_CODE) are not configured on this staging server.'
+        ),
+        { statusCode: 503 }
+      );
+    }
+
+    const expectedMobile = normalizeMobileNumber(process.env.DEMO_ADMIN_MOBILE);
+    const expectedCode = String(process.env.DEMO_ADMIN_ACCESS_CODE || '').trim();
+    const providedMobile = normalizeMobileNumber(input.mobile);
+    const providedCode = String(input.accessCode || '').trim();
+
+    if (!providedMobile || !providedCode) {
+      throw Object.assign(new Error('Demo mobile number and access code are required.'), {
+        statusCode: 400,
+      });
+    }
+
+    const mobA = crypto.createHash('sha256').update(providedMobile).digest();
+    const mobB = crypto.createHash('sha256').update(expectedMobile).digest();
+    const codeA = crypto.createHash('sha256').update(providedCode).digest();
+    const codeB = crypto.createHash('sha256').update(expectedCode).digest();
+
+    const valid = crypto.timingSafeEqual(mobA, mobB) && crypto.timingSafeEqual(codeA, codeB);
+    if (!valid) {
+      throw Object.assign(new Error('Invalid demo mobile number or access code.'), {
+        statusCode: 401,
+      });
+    }
+
+    const session = this.signDemoAdminToken(expectedMobile);
+    return {
+      token: session.token,
+      expiresAt: session.expiresAt,
+      demoMode: true,
+      admin: {
+        adminId: 'demo_admin_sandbox',
+        displayName: 'Demo Administrator (Sandbox)',
+        mobile: expectedMobile,
+        updatedAt: new Date().toISOString(),
+        isDemo: true,
+        role: 'demo_admin' as const,
+      },
+    };
+  }
+
   public getAuthStatus(): {
     hasAdminConfigured: boolean;
     smsGatewayConfigured: boolean;
     maskedMobile: string | null;
+    demoLoginAvailable: boolean;
+    demoCredentialsConfigured: boolean;
+    deploymentEnv: string;
   } {
     const mobile = this.store.admin?.mobile || '';
     const masked =
       mobile.length >= 6
         ? `${mobile.slice(0, 2)}${'*'.repeat(Math.max(2, mobile.length - 5))}${mobile.slice(-3)}`
         : null;
+    const demoEnabled = this.isDemoAdminEnabled();
+    const depEnv = String(process.env.DEPLOYMENT_ENV || process.env.APP_ENV || 'production')
+      .trim()
+      .toLowerCase();
     return {
       hasAdminConfigured: Boolean(this.store.admin),
       smsGatewayConfigured: Boolean((process.env.SMS_API_KEY || '').trim()),
       maskedMobile: masked,
+      demoLoginAvailable: demoEnabled,
+      demoCredentialsConfigured: demoEnabled && this.areDemoCredentialsConfigured(),
+      deploymentEnv: depEnv,
     };
   }
 
