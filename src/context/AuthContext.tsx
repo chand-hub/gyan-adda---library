@@ -119,6 +119,10 @@ interface AuthContextValue {
   completeStudentProfile: (details: Omit<RegistrationDetails, 'password'>) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   loginAdminWithMobile: (mobile: string, password: string) => Promise<void>;
+  completeAdminSession: (
+    mobile: string,
+    payload?: { token?: string; admin?: Partial<AdminSessionInfo>; authenticated?: boolean }
+  ) => void;
   loginDemoAdmin: (mobile: string, accessCode: string) => Promise<void>;
   setupAdminCredentials: (input: {
     mobile: string;
@@ -534,23 +538,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await sendPasswordResetEmail(auth, email.trim());
   };
 
+  const completeAdminSession = useCallback(
+    (
+      mobile: string,
+      payload?: { token?: string; admin?: Partial<AdminSessionInfo>; authenticated?: boolean }
+    ) => {
+      if (payload?.token) {
+        setAdminToken(payload.token);
+      }
+      setAdminSession({
+        adminId: payload?.admin?.adminId || 'admin',
+        displayName: payload?.admin?.displayName || 'GYAN ADDA Admin',
+        mobile: payload?.admin?.mobile || mobile,
+        updatedAt: payload?.admin?.updatedAt || new Date().toISOString(),
+        isDemo: false,
+        role: 'admin',
+      });
+    },
+    []
+  );
+
   const loginAdminWithMobile = async (mobile: string, password: string) => {
     setAuthError(null);
-    const result = await safeApiFetch<{ token: string; admin: AdminSessionInfo }>(
-      '/api/admin/auth/login',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile, password }),
-      }
-    );
-    if (!result.ok || !result.data?.token || !result.data?.admin) {
+    const result = await safeApiFetch<{
+      ok?: boolean;
+      authenticated?: boolean;
+      token?: string;
+      admin?: AdminSessionInfo;
+    }>('/api/admin/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile, password }),
+    });
+    const isAuthed =
+      result.ok &&
+      result.data?.ok !== false &&
+      (Boolean(result.data?.token && result.data?.admin) ||
+        result.data?.authenticated === true ||
+        result.data?.ok === true);
+
+    if (!isAuthed) {
       const msg = result.error || 'Invalid mobile number or password.';
       setAuthError(msg);
       throw new Error(msg);
     }
-    setAdminToken(result.data.token);
-    setAdminSession({ ...result.data.admin, isDemo: false, role: 'admin' });
+    completeAdminSession(mobile, result.data || undefined);
   };
 
   const loginDemoAdmin = async (mobile: string, accessCode: string) => {
@@ -670,6 +702,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         completeStudentProfile,
         sendPasswordReset,
         loginAdminWithMobile,
+        completeAdminSession,
         loginDemoAdmin,
         setupAdminCredentials,
         updateAdminSessionMobile,

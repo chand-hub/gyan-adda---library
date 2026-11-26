@@ -14,7 +14,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, type AdminSessionInfo } from '../context/AuthContext';
 import { safeApiFetch } from '../lib/safeFetch';
 
 interface AdminLoginPageProps {
@@ -30,16 +30,47 @@ type AdminAuthStep =
   | 'forgot_otp'
   | 'forgot_reset';
 
+interface AuthStatusResponse {
+  ok?: boolean;
+  authenticated?: boolean;
+  configured?: boolean;
+  adminConfigured?: boolean;
+  hasAdmin?: boolean;
+  hasAdminConfigured?: boolean;
+  setupRequired?: boolean;
+  needsSetup?: boolean;
+  smsGatewayConfigured?: boolean;
+  demoLoginAvailable?: boolean;
+  demoCredentialsConfigured?: boolean;
+}
+
+interface LoginResponse {
+  ok?: boolean;
+  success?: boolean;
+  authenticated?: boolean;
+  token?: string;
+  admin?: Partial<AdminSessionInfo>;
+  error?: string;
+  message?: string;
+}
+
 export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
   onBackToPublic,
   onSuccess,
 }) => {
-  const { loginAdminWithMobile, loginDemoAdmin, setupAdminCredentials, signInWithGoogle } =
-    useAuth();
+  const authContext = useAuth() as ReturnType<typeof useAuth> & {
+    completeAdminSession?: (
+      mobile: string,
+      payload?: { token?: string; admin?: Partial<AdminSessionInfo>; authenticated?: boolean }
+    ) => void;
+  };
+  const { loginDemoAdmin, setupAdminCredentials, signInWithGoogle, completeAdminSession } =
+    authContext;
 
   const [step, setStep] = useState<AdminAuthStep>('login');
   const [statusLoading, setStatusLoading] = useState(true);
-  const [hasAdminConfigured, setHasAdminConfigured] = useState(true);
+  const [setupRequired, setSetupRequired] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
   const [smsGatewayConfigured, setSmsGatewayConfigured] = useState(false);
   const [demoLoginAvailable, setDemoLoginAvailable] = useState(false);
   const [demoCredentialsConfigured, setDemoCredentialsConfigured] = useState(false);
@@ -68,22 +99,39 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
     let active = true;
     (async () => {
       try {
-        const result = await safeApiFetch<{
-          hasAdminConfigured?: boolean;
-          smsGatewayConfigured?: boolean;
-          demoLoginAvailable?: boolean;
-          demoCredentialsConfigured?: boolean;
-        }>('/api/admin/auth/status');
+        const result = await safeApiFetch<AuthStatusResponse>('/api/admin/auth/status');
         if (!active) return;
         if (result.ok && result.data) {
-          setHasAdminConfigured(Boolean(result.data.hasAdminConfigured));
-          setSmsGatewayConfigured(Boolean(result.data.smsGatewayConfigured));
-          setDemoLoginAvailable(Boolean(result.data.demoLoginAvailable));
-          setDemoCredentialsConfigured(Boolean(result.data.demoCredentialsConfigured));
-          if (!result.data.hasAdminConfigured) {
-            setStep('setup');
+          const d = result.data;
+          const isConfigured =
+            d.setupRequired === false ||
+            d.hasAdmin === true ||
+            d.adminConfigured === true ||
+            d.configured === true ||
+            d.hasAdminConfigured === true ||
+            d.needsSetup === false;
+
+          const requiresSetup =
+            !isConfigured &&
+            (d.setupRequired === true ||
+              d.hasAdmin === false ||
+              d.needsSetup === true ||
+              d.hasAdminConfigured === false);
+
+          setSetupRequired(requiresSetup);
+          setSmsGatewayConfigured(Boolean(d.smsGatewayConfigured));
+          setDemoLoginAvailable(Boolean(d.demoLoginAvailable));
+          setDemoCredentialsConfigured(Boolean(d.demoCredentialsConfigured));
+          setStep(requiresSetup ? 'setup' : 'login');
+
+          if (d.authenticated === true) {
+            setAuthenticated(true);
+            completeAdminSession?.(mobile);
+            onSuccess();
           }
         } else if (result.error) {
+          setSetupRequired(false);
+          setStep('login');
           setErrorMsg(result.error);
         }
       } finally {
@@ -117,20 +165,49 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
 
     const normalizedMobile = normalizeClientMobile(mobile);
     if (!/^[6-9]\d{9}$/.test(normalizedMobile) && !/^\d{10,15}$/.test(normalizedMobile)) {
-      setErrorMsg('Please enter a valid 10-digit registered mobile number.');
+      setErrorMsg('Please enter a valid 10-digit mobile number.');
       return;
     }
     if (!password.trim()) {
-      setErrorMsg('Administrator password is required.');
+      setErrorMsg('Password is required.');
       return;
     }
 
     setSubmitting(true);
     try {
-      await loginAdminWithMobile(normalizedMobile, password);
+      const result = await safeApiFetch<LoginResponse>('/api/admin/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile: normalizedMobile, password }),
+      });
+
+      const payload = result.data;
+      const loginSucceeded =
+        result.ok &&
+        payload?.ok !== false &&
+        payload?.success !== false &&
+        (payload?.ok === true ||
+          payload?.authenticated === true ||
+          payload?.success === true ||
+          Boolean(payload?.token));
+
+      if (!loginSucceeded) {
+        setAuthenticated(false);
+        const serverErr =
+          (typeof payload?.error === 'string' && payload.error.trim()) ||
+          (typeof payload?.message === 'string' && payload.message.trim()) ||
+          result.error ||
+          'Invalid mobile number or password.';
+        setErrorMsg(serverErr);
+        return;
+      }
+
+      setAuthenticated(true);
+      completeAdminSession?.(normalizedMobile, payload || undefined);
       onSuccess();
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Invalid mobile number or password.');
+      setAuthenticated(false);
+      setErrorMsg(err?.message || 'Unable to sign in. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -138,6 +215,11 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
 
   const handleSetup = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!setupRequired) {
+      setStep('login');
+      setErrorMsg('Admin is already set up. Please use Sign In.');
+      return;
+    }
     setErrorMsg(null);
     setInfoMsg(null);
     if (password !== confirmPassword) {
@@ -147,6 +229,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
     setSubmitting(true);
     try {
       await setupAdminCredentials({ mobile, password, displayName });
+      setAuthenticated(true);
       onSuccess();
     } catch (err: any) {
       setErrorMsg(err?.message || 'Unable to complete admin setup.');
@@ -267,6 +350,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
     setSubmitting(true);
     try {
       await signInWithGoogle();
+      setAuthenticated(true);
       onSuccess();
     } catch (err: any) {
       setErrorMsg(err?.message || 'Google sign-in failed.');
@@ -277,6 +361,8 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
 
   const inputCls =
     'w-full pl-10 pr-3 py-2.5 text-sm rounded-lg border border-outline-variant bg-surface-container-lowest text-on-surface placeholder:text-outline focus:border-secondary focus:ring-1 focus:ring-secondary focus:outline-none';
+
+  const activeStep: AdminAuthStep = step === 'setup' && !setupRequired ? 'login' : step;
 
   return (
     <div className="min-h-screen bg-surface-container-low text-on-surface flex flex-col justify-between p-4 sm:p-6 lg:p-8">
@@ -340,40 +426,62 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                 Checking administrator security configuration...
               </p>
             </div>
+          ) : authenticated ? (
+            <div className="py-10 max-w-md w-full mx-auto text-center space-y-4">
+              <div className="w-12 h-12 rounded-full bg-secondary-container text-secondary flex items-center justify-center mx-auto">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <h2 className="font-display text-xl font-bold text-primary">
+                Administrator Authenticated
+              </h2>
+              <p className="text-xs text-on-surface-variant">
+                Opening the GYAN ADDA LIBRARY Administration Console...
+              </p>
+              <button
+                type="button"
+                onClick={onSuccess}
+                className="inline-flex items-center justify-center px-5 py-2.5 rounded-lg bg-secondary text-white text-sm font-bold hover:bg-primary transition-colors cursor-pointer"
+              >
+                Open Admin Dashboard
+              </button>
+            </div>
           ) : (
             <div className="space-y-5 max-w-md w-full mx-auto">
               <div>
                 <h2 className="font-display text-xl font-bold text-primary">
-                  {step === 'setup'
+                  {activeStep === 'setup'
                     ? 'First-Run Admin Setup'
-                    : step === 'demo_login'
+                    : activeStep === 'demo_login'
                       ? 'Demo Admin Login (Sandbox Only)'
-                      : step === 'login'
-                        ? 'Sign In with Mobile Number'
-                        : step === 'forgot_mobile'
+                      : activeStep === 'login'
+                        ? 'Administrator Sign In'
+                        : activeStep === 'forgot_mobile'
                           ? 'Forgot Admin Password'
-                          : step === 'forgot_otp'
+                          : activeStep === 'forgot_otp'
                             ? 'Verify SMS OTP'
                             : 'Set New Admin Password'}
                 </h2>
                 <p className="text-xs text-on-surface-variant mt-1">
-                  {step === 'setup'
-                    ? 'No administrator mobile credential has been configured yet. Register the primary Admin mobile number and password below.'
-                    : step === 'demo_login'
+                  {activeStep === 'setup'
+                    ? 'Register the primary Admin mobile number and password below.'
+                    : activeStep === 'demo_login'
                       ? 'Restricted staging demonstration using backend demo credentials (no OTP). Uses synthetic demo records only.'
-                      : step === 'login'
-                        ? 'Enter your registered 10-digit mobile number and administrator password.'
-                        : step === 'forgot_mobile'
+                      : activeStep === 'login'
+                        ? 'Sign in with your registered mobile number and password.'
+                        : activeStep === 'forgot_mobile'
                           ? 'Enter your registered administrator mobile number to receive a 6-digit SMS OTP.'
-                          : step === 'forgot_otp'
+                          : activeStep === 'forgot_otp'
                             ? 'Enter the 6-digit verification code sent via SMS to your registered mobile.'
                             : 'Choose a strong password (minimum 8 characters with letters and numbers).'}
                 </p>
               </div>
 
               {errorMsg && (
-                <div className="p-3 rounded-lg border border-error bg-error-container text-on-error-container text-xs flex items-start gap-2">
-                  <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                <div
+                  role="alert"
+                  className="p-3 rounded-lg border border-red-300 bg-red-50 text-red-700 text-xs font-medium flex items-start gap-2"
+                >
+                  <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
                   <span className="min-w-0 break-words">{errorMsg}</span>
                 </div>
               )}
@@ -385,7 +493,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                 </div>
               )}
 
-              {step === 'setup' && (
+              {activeStep === 'setup' && setupRequired && (
                 <form onSubmit={handleSetup} className="space-y-3.5">
                   <div>
                     <label className="block text-xs font-semibold text-on-surface mb-1">
@@ -405,7 +513,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-on-surface mb-1">
-                      Registered Mobile Number
+                      Mobile Number
                     </label>
                     <div className="relative">
                       <Phone className="w-4 h-4 text-outline absolute left-3 top-3" />
@@ -466,16 +574,16 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                     disabled={submitting}
                     className="w-full py-2.5 px-4 rounded-lg bg-primary text-white text-sm font-bold hover:bg-primary-container transition-colors disabled:opacity-60 cursor-pointer"
                   >
-                    {submitting ? 'Initializing...' : 'Initialize Admin Account & Enter Console'}
+                    {submitting ? 'Setting Up...' : 'Complete Admin Setup'}
                   </button>
                 </form>
               )}
 
-              {step === 'login' && (
+              {activeStep === 'login' && (
                 <form onSubmit={handleLogin} noValidate className="space-y-4">
                   <div>
                     <label className="block text-xs font-semibold text-on-surface mb-1">
-                      Registered Mobile Number
+                      Mobile Number
                     </label>
                     <div className="relative">
                       <Smartphone className="w-4 h-4 text-outline absolute left-3 top-3" />
@@ -492,7 +600,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
 
                   <div>
                     <label className="block text-xs font-semibold text-on-surface mb-1">
-                      Admin Password
+                      Password
                     </label>
                     <div className="relative">
                       <Lock className="w-4 h-4 text-outline absolute left-3 top-3" />
@@ -516,17 +624,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between gap-2 text-xs">
-                    {!hasAdminConfigured ? (
-                      <button
-                        type="button"
-                        onClick={() => setStep('setup')}
-                        className="font-semibold text-secondary hover:underline cursor-pointer"
-                      >
-                        First-run Admin Setup
-                      </button>
-                    ) : (
-                      <span className="text-on-surface-variant">Mobile OTP recovery supported</span>
-                    )}
+                    <span className="text-on-surface-variant">Mobile OTP recovery supported</span>
                     <button
                       type="button"
                       onClick={() => {
@@ -545,7 +643,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                     disabled={submitting}
                     className="w-full py-2.5 px-4 rounded-lg bg-secondary text-white text-sm font-bold hover:bg-primary transition-colors disabled:opacity-60 cursor-pointer"
                   >
-                    {submitting ? 'Verifying Credentials...' : 'Sign In to Admin Dashboard'}
+                    {submitting ? 'Signing In...' : 'Sign In'}
                   </button>
 
                   {demoLoginAvailable && (
@@ -567,7 +665,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                 </form>
               )}
 
-              {step === 'demo_login' && demoLoginAvailable && (
+              {activeStep === 'demo_login' && demoLoginAvailable && (
                 <form onSubmit={handleDemoLogin} className="space-y-4">
                   <div className="p-3 rounded-lg bg-warning-container text-on-warning-container border border-warning/40 text-xs leading-relaxed">
                     <strong>DEMO MODE · READ-ONLY SANDBOX:</strong> Verify with your staging{' '}
@@ -630,7 +728,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                       onClick={() => {
                         setErrorMsg(null);
                         setInfoMsg(null);
-                        setStep(hasAdminConfigured ? 'login' : 'setup');
+                        setStep(setupRequired ? 'setup' : 'login');
                       }}
                       className="flex-1 min-w-[120px] py-2.5 px-4 rounded-lg border border-outline-variant text-xs font-semibold text-on-surface hover:bg-surface-container-low cursor-pointer"
                     >
@@ -647,7 +745,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                 </form>
               )}
 
-              {step === 'forgot_mobile' && (
+              {activeStep === 'forgot_mobile' && (
                 <form onSubmit={handleRequestOtp} className="space-y-4">
                   {!smsGatewayConfigured && (
                     <div className="p-3 rounded-lg bg-warning-container text-on-warning-container border border-warning/30 text-xs leading-relaxed">
@@ -693,7 +791,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                 </form>
               )}
 
-              {step === 'forgot_otp' && (
+              {activeStep === 'forgot_otp' && (
                 <form onSubmit={handleVerifyOtp} className="space-y-4">
                   <div>
                     <label className="block text-xs font-semibold text-on-surface mb-1">
@@ -740,7 +838,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                 </form>
               )}
 
-              {step === 'forgot_reset' && (
+              {activeStep === 'forgot_reset' && (
                 <form onSubmit={handleResetPassword} className="space-y-4">
                   <div>
                     <label className="block text-xs font-semibold text-on-surface mb-1">
